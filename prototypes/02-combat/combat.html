@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Radiant Warfront — 02 Combat</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
+               touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  #wrap { display: flex; height: 100%; position: relative; }
+  #stage { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #panelToggle { display: none; position: absolute; top: 10px; right: 10px; z-index: 10; font-size: 18px; padding: 6px 12px; }
+  #dodgeBtn { position: absolute; bottom: 22px; right: 22px; z-index: 8; font-size: 15px; font-weight: 700;
+              padding: 18px 22px; border-radius: 50px; background: #23304a; border: 1px solid #3a4a6a; color: #cdd6e4; }
+  #dodgeBtn:active { background: #3a4a6a; }
+  @media (max-width: 700px) {
+    #panelToggle { display: block; }
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
+             transform: translateX(100%); transition: transform .2s; box-shadow: -8px 0 24px rgba(0,0,0,.5); }
+    #panel.open { transform: none; }
+  }
+  #panel { width: 270px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
+  #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
+  #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
+  .tun { margin-bottom: 8px; }
+  .tun label { display: flex; justify-content: space-between; cursor: help; }
+  .tun label span.val { color: #8fa3c8; }
+  .tun input { width: 100%; }
+  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  #hud .big { font-size: 20px; font-weight: 600; }
+  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+  button:hover { background: #253150; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <button id="panelToggle">⚙</button>
+    <button id="dodgeBtn">DODGE</button>
+  </div>
+  <div id="panel">
+    <h1>02 · COMBAT</h1>
+    <div class="hint">
+      Blue = yours, red = opposition (same class table). Press near a blue ship to grab, drag to aim, lift to fling.
+      DODGE (or Space) barrel-rolls the held ship: straight line, big energy cost, turn lockout after.<br><br>
+      Guns are automatic: cones acquire first entrant, cooldown only ticks on a valid target, spread tightens with lock.
+      One energy pool = health + ammo + boost. F: refocus. 1–4: grab bank. R: restart. N: new seed.
+    </div>
+    <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
+    <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES <span style="color:#5b6880">(hover for tooltip)</span></div>
+    <div id="tunables"></div>
+  </div>
+</div>
+<script src="sim.js"></script>
+<script>
+'use strict';
+const { Sim, TUNABLES, CLASSES, PLAYER, ENEMY, mulberry32 } = CombatSim;
+
+let seed = 4242;
+let overrides = {};
+let sim = new Sim(seed, overrides);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+
+const STRUCTURAL = new Set(['hazardCount', 'hazardBandInner', 'hazardRadiusMin', 'hazardRadiusMax', 'tickRate', 'arenaRadius']);
+const tunDiv = document.getElementById('tunables');
+for (const key in TUNABLES) {
+  const t = TUNABLES[key];
+  const row = document.createElement('div');
+  row.className = 'tun';
+  const step = (t.max - t.min) > 20 ? 1 : 0.005;
+  row.innerHTML = '<label title="' + t.tooltip + '">' + key + (STRUCTURAL.has(key) ? ' *' : '') +
+    '<span class="val" id="v_' + key + '">' + t.value + '</span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + step + '" value="' + t.value + '" id="s_' + key + '">';
+  tunDiv.appendChild(row);
+  row.querySelector('input').addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    overrides[key] = v;
+    document.getElementById('v_' + key).textContent = v;
+    if (!STRUCTURAL.has(key)) sim.T[key] = v;
+  });
+}
+
+function restart(newSeed) {
+  if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  sim = new Sim(seed, overrides);
+  survivalTime = 0;
+  flashes.length = 0;
+}
+document.getElementById('btnRestart').addEventListener('click', () => restart(false));
+document.getElementById('btnSeed').addEventListener('click', () => restart(true));
+document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
+document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); sim.command({ type: 'dodge' }); });
+
+// ---- Pointer input: one path for mouse and touch. ----
+let pointer = { x: 0, y: 0, down: false, id: -1 };
+let cam = { scale: 1, ox: 0, oy: 0 };
+function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
+function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (pointer.down) return;
+  if (sim.aliveCount(PLAYER) === 0 || sim.aliveCount(ENEMY) === 0) { restart(false); return; }
+  const p = localXY(e);
+  pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
+  cv.setPointerCapture(e.pointerId);
+  const w = toWorld(p.x, p.y);
+  let bestU = null, bestD = Infinity;
+  for (const u of sim.units) {
+    if (u.team !== PLAYER || u.state !== 'alive') continue;
+    const d = Math.hypot(u.x - w.x, u.y - w.y);
+    if (d < bestD) { bestD = d; bestU = u; }
+  }
+  if (bestU) sim.command({ type: 'grab', unit: bestU.id });
+});
+cv.addEventListener('pointermove', e => {
+  if (pointer.down && e.pointerId !== pointer.id) return;
+  const p = localXY(e);
+  pointer.x = p.x; pointer.y = p.y;
+});
+function endPointer(e) {
+  if (!pointer.down || e.pointerId !== pointer.id) return;
+  pointer.down = false; pointer.id = -1;
+  sim.command({ type: 'release' });
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+
+window.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (e.key >= '1' && e.key <= '9') { sim.command({ type: 'grab', unit: parseInt(e.key, 10) - 1 }); pointer.down = true; }
+  if (e.key === ' ') { e.preventDefault(); sim.command({ type: 'dodge' }); }
+  if (e.key === 'f' || e.key === 'F') sim.command({ type: 'refocus' });
+  if (e.key === 'r' || e.key === 'R') restart(false);
+  if (e.key === 'n' || e.key === 'N') restart(true);
+});
+window.addEventListener('keyup', e => {
+  if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; sim.command({ type: 'release' }); }
+});
+
+// ---- Fixed-tick sim, decoupled render. ----
+let acc = 0, last = performance.now();
+let survivalTime = 0;
+const flashes = []; // detonation ring effects (render-only, never touches sim state)
+
+function frame(now) {
+  const dtReal = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  acc += dtReal;
+  const stepLen = 1 / sim.T.tickRate;
+  while (acc >= stepLen) {
+    if (pointer.down && sim.heldUnit >= 0) {
+      const u = sim.units[sim.heldUnit];
+      const w = toWorld(pointer.x, pointer.y);
+      sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
+    }
+    sim.step();
+    for (const e of sim.events) if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
+    if (sim.aliveCount(PLAYER) > 0 && sim.aliveCount(ENEMY) > 0) survivalTime += stepLen;
+    acc -= stepLen;
+  }
+  render(dtReal);
+  requestAnimationFrame(frame);
+}
+
+const TEAMCOL = ['#9fd0ff', '#ff9f8a'];
+function render(dtReal) {
+  const W = cv.clientWidth, H = cv.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const R = sim.T.arenaRadius;
+  cam.scale = Math.min(W, H) / (R * 2.15);
+  cam.ox = W / 2; cam.oy = H / 2;
+
+  ctx.fillStyle = '#0b0e14';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(cam.ox, cam.oy);
+  ctx.scale(cam.scale, cam.scale);
+
+  ctx.strokeStyle = '#1d2636'; ctx.lineWidth = 3 / cam.scale;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.stroke();
+
+  for (const h of sim.hazards) {
+    const vr = mulberry32(((h.x * 73856093) ^ (h.y * 19349663)) >>> 0);
+    ctx.beginPath();
+    const spikes = 5 + Math.floor(vr() * 3);
+    for (let i = 0; i <= spikes * 2; i++) {
+      const a = (i / (spikes * 2)) * Math.PI * 2;
+      const rr = h.r * (i % 2 === 0 ? 1 : 0.55 + vr() * 0.2);
+      ctx[i === 0 ? 'moveTo' : 'lineTo'](h.x + Math.cos(a) * rr, h.y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fillStyle = h.salvage ? 'rgba(190,120,255,0.30)' : 'rgba(120,180,255,0.16)';
+    ctx.strokeStyle = h.salvage ? '#b87aff' : '#4f7fc0';
+    ctx.lineWidth = 1.5 / cam.scale;
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Units
+  for (const u of sim.units) {
+    if (u.state === 'crystallized') continue;
+    const cls = CLASSES[u.cls];
+    const r = sim.T.unitRadius * (u.cls === 'bomber' || u.cls === 'heavy' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
+    ctx.save();
+    ctx.translate(u.x, u.y);
+
+    // Firing cone (faint), drawn at the GUN angle — visibly independent of hull
+    if (u.state === 'alive') {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, cls.coneRange, u.gunAngle - cls.coneHalf, u.gunAngle + cls.coneHalf);
+      ctx.closePath();
+      ctx.fillStyle = u.team === PLAYER ? 'rgba(120,170,255,0.045)' : 'rgba(255,130,110,0.045)';
+      ctx.fill();
+    }
+
+    // Energy ring = health + ammo + boost, the only bar there is
+    if (u.state === 'alive') {
+      const frac = u.energy / cls.energyMax;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 7, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.strokeStyle = frac > 0.5 ? '#5fd08a' : (frac > 0.2 ? '#e8c34a' : '#e85a4a');
+      ctx.lineWidth = 3 / cam.scale;
+      ctx.stroke();
+      if (u.team === PLAYER && u.momentum <= 0.25) { // juggle warning
+        ctx.beginPath(); ctx.arc(0, 0, r + 12, 0, 7);
+        ctx.strokeStyle = 'rgba(232,90,74,' + (0.4 + 0.6 * Math.abs(Math.sin(sim.tick * 0.3))) + ')';
+        ctx.lineWidth = 2 / cam.scale;
+        ctx.stroke();
+      }
+    }
+
+    ctx.rotate(u.heading);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
+    ctx.closePath();
+    if (u.state === 'crystallizing') {
+      const f = u.crystallizeTimer / sim.T.crystallizeSec;
+      ctx.fillStyle = 'rgba(150,140,255,' + (0.4 + f * 0.6) + ')';
+    } else {
+      ctx.fillStyle = u.held ? '#ffffff' : TEAMCOL[u.team];
+    }
+    ctx.fill();
+    ctx.restore();
+
+    // Gun barrel drawn separately at gunAngle
+    if (u.state === 'alive') {
+      ctx.beginPath();
+      ctx.moveTo(u.x, u.y);
+      ctx.lineTo(u.x + Math.cos(u.gunAngle) * r * 2, u.y + Math.sin(u.gunAngle) * r * 2);
+      ctx.strokeStyle = u.held ? '#fff' : TEAMCOL[u.team];
+      ctx.lineWidth = 2.5 / cam.scale;
+      ctx.stroke();
+    }
+
+    if (u.team === PLAYER) {
+      ctx.fillStyle = '#5b6880';
+      ctx.font = (12 / cam.scale) + 'px system-ui';
+      ctx.fillText(String(u.id + 1), u.x + r + 4, u.y - r - 4);
+    }
+  }
+
+  // Projectiles
+  ctx.fillStyle = '#ffe9a8';
+  for (const p of sim.projectiles) {
+    if (!p.active) continue;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
+  }
+
+  // Detonation flashes
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    f.age += dtReal;
+    const t = f.age / 0.35;
+    if (t >= 1) { flashes.splice(i, 1); continue; }
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * t, 0, 7);
+    ctx.strokeStyle = 'rgba(255,190,120,' + (1 - t) * 0.7 + ')';
+    ctx.lineWidth = 2.5 / cam.scale;
+    ctx.stroke();
+  }
+
+  // Aim line
+  if (sim.heldUnit >= 0) {
+    const u = sim.units[sim.heldUnit];
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(u.x + Math.cos(sim.aimAngle) * 140, u.y + Math.sin(sim.aimAngle) * 140);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 2 / cam.scale;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+
+  const mine = sim.aliveCount(PLAYER), foes = sim.aliveCount(ENEMY);
+  hud.innerHTML =
+    '<div class="big">' + mine + ' vs ' + foes + '</div>' +
+    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' +
+    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — tap to restart</div>' :
+     foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — tap to restart</div>' : '');
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
