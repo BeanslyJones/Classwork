@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Radiant Warfront — 04 Fields</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
+               touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  #wrap { display: flex; height: 100%; position: relative; }
+  #stage { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #panelToggle { display: none; position: absolute; top: 10px; right: 10px; z-index: 10; font-size: 18px; padding: 6px 12px; }
+  #boostBtn { position: absolute; bottom: 22px; right: 22px; z-index: 8; font-size: 15px; font-weight: 700;
+              padding: 18px 22px; border-radius: 50px; background: #23304a; border: 1px solid #3a4a6a; color: #cdd6e4; }
+  #boostBtn:active { background: #3a4a6a; }
+  @media (max-width: 700px) {
+    #panelToggle { display: block; }
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
+             transform: translateX(100%); transition: transform .2s; box-shadow: -8px 0 24px rgba(0,0,0,.5); }
+    #panel.open { transform: none; }
+  }
+  #panel { width: 280px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
+  #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
+  #panel h2 { font-size: 12px; margin: 14px 0 6px; color: #8fa3c8; }
+  #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
+  .tun { margin-bottom: 8px; }
+  .tun label { display: flex; justify-content: space-between; cursor: help; }
+  .tun label span.val { color: #8fa3c8; }
+  .tun input[type=range] { width: 100%; }
+  select { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 2px 6px; }
+  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  #hud .big { font-size: 18px; font-weight: 600; }
+  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <button id="panelToggle">⚙</button>
+    <button id="boostBtn">BOOST</button>
+  </div>
+  <div id="panel">
+    <h1>04 · TWO TOUCHING FIELDS</h1>
+    <div class="hint">
+      One test ship, two rad fields. Press anywhere to grab the ship, drag to aim, lift to release.
+      BOOST (or Space) = maneuvering. Your field (left) recharges you while you cruise; hard turns,
+      boosting, or being shot suspend that. The other field bleeds you by the wheel:
+      attuned &lt; strong &lt; neutral &lt; weak. The seam is battery-weighted — drain a battery and watch it walk.
+    </div>
+    <h2>SHIP</h2>
+    <div class="tun"><label>protection color <select id="protColor"></select></label></div>
+    <div class="tun"><label title="How much drain the hull shrugs off. Clips at protClip — never all of it.">protection level
+      <span class="val" id="v_prot">0.7</span></label>
+      <input type="range" id="s_prot" min="0" max="1" step="0.01" value="0.7"></div>
+    <div id="fieldCtls"></div>
+    <div style="margin-top:10px"><button id="btnRestart">Restart (R)</button></div>
+    <h2>TUNABLES <span style="color:#5b6880;font-weight:400">(hover for tooltip)</span></h2>
+    <div id="tunables"></div>
+  </div>
+</div>
+<script src="sim.js"></script>
+<script>
+'use strict';
+const { Sim, TUNABLES, RAD } = FieldSim;
+
+const RADCOL = { cinder: '#ff7a45', bloom: '#e267d8', brine: '#3fc9a0', halo: '#e8d27a' };
+
+let seed = 777;
+let overrides = {};
+let sim = new Sim(seed, overrides);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+let zoneDirty = true;
+
+// ---- Panel ----
+const protSel = document.getElementById('protColor');
+for (const c of RAD) {
+  const o = document.createElement('option');
+  o.value = c; o.textContent = c;
+  protSel.appendChild(o);
+}
+protSel.value = sim.ship.protColor;
+protSel.addEventListener('change', () => { sim.ship.protColor = protSel.value; });
+document.getElementById('s_prot').addEventListener('input', e => {
+  sim.ship.protLevel = parseFloat(e.target.value);
+  document.getElementById('v_prot').textContent = e.target.value;
+});
+
+const fieldCtls = document.getElementById('fieldCtls');
+function buildFieldControls() {
+  fieldCtls.innerHTML = '';
+  sim.fields.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.innerHTML = '<h2>FIELD ' + (i + 1) + ' (team ' + (f.team + 1) + ')</h2>' +
+      '<div class="tun"><label>color <select id="fc_' + i + '"></select></label></div>' +
+      '<div class="tun"><label>battery <span class="val" id="fbv_' + i + '">' + f.battery + '</span></label>' +
+      '<input type="range" id="fb_' + i + '" min="5" max="150" step="1" value="' + f.battery + '"></div>';
+    fieldCtls.appendChild(div);
+    const sel = div.querySelector('#fc_' + i);
+    for (const c of RAD) {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    }
+    sel.value = f.color;
+    sel.addEventListener('change', () => { f.color = sel.value; zoneDirty = true; });
+    div.querySelector('#fb_' + i).addEventListener('input', e => {
+      f.battery = parseFloat(e.target.value);
+      document.getElementById('fbv_' + i).textContent = e.target.value;
+      zoneDirty = true;
+    });
+  });
+}
+
+const tunDiv = document.getElementById('tunables');
+for (const key in TUNABLES) {
+  const t = TUNABLES[key];
+  const row = document.createElement('div');
+  row.className = 'tun';
+  const step = (t.max - t.min) > 20 ? 1 : 0.005;
+  row.innerHTML = '<label title="' + t.tooltip + '">' + key +
+    '<span class="val" id="v_' + key + '">' + t.value + '</span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + step + '" value="' + t.value + '" id="s_' + key + '">';
+  tunDiv.appendChild(row);
+  row.querySelector('input').addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    overrides[key] = v;
+    document.getElementById('v_' + key).textContent = v;
+    sim.T[key] = v;
+    zoneDirty = true;
+  });
+}
+
+function restart() {
+  sim = new Sim(seed, overrides);
+  sim.ship.protColor = protSel.value;
+  sim.ship.protLevel = parseFloat(document.getElementById('s_prot').value);
+  buildFieldControls();
+  zoneDirty = true;
+}
+document.getElementById('btnRestart').addEventListener('click', restart);
+document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
+document.getElementById('boostBtn').addEventListener('pointerdown', e => { e.stopPropagation(); sim.command({ type: 'boost' }); });
+buildFieldControls();
+
+// ---- Pointer input ----
+let pointer = { x: 0, y: 0, down: false, id: -1 };
+let cam = { scale: 1, ox: 0, oy: 0 };
+function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
+function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (pointer.down) return;
+  if (sim.ship.state === 'crystallized') { restart(); return; }
+  const p = localXY(e);
+  pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
+  cv.setPointerCapture(e.pointerId);
+  sim.command({ type: 'grab' });
+});
+cv.addEventListener('pointermove', e => {
+  if (pointer.down && e.pointerId !== pointer.id) return;
+  const p = localXY(e);
+  pointer.x = p.x; pointer.y = p.y;
+});
+function endPointer(e) {
+  if (!pointer.down || e.pointerId !== pointer.id) return;
+  pointer.down = false; pointer.id = -1;
+  sim.command({ type: 'release' });
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+window.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (e.key === ' ') { e.preventDefault(); sim.command({ type: 'boost' }); }
+  if (e.key === 'r' || e.key === 'R') restart();
+});
+
+// ---- Zone layer: offscreen, re-rendered only when dirty (or on a slow clock while drifting). ----
+const zoneCv = document.createElement('canvas');
+const zctx = zoneCv.getContext('2d');
+const CELL = 6; // world units per zone-texture texel
+let lastZoneRender = 0;
+
+function renderZones() {
+  const R = sim.T.arenaRadius;
+  const side = Math.ceil((R * 2) / CELL);
+  if (zoneCv.width !== side) { zoneCv.width = side; zoneCv.height = side; }
+  const img = zctx.createImageData(side, side);
+  const d = img.data;
+  for (let gy = 0; gy < side; gy++) {
+    for (let gx = 0; gx < side; gx++) {
+      const wx = -R + gx * CELL, wy = -R + gy * CELL;
+      const z = sim.zoneAt(wx, wy);
+      const i = (gy * side + gx) * 4;
+      if (!z.color) { d[i + 3] = 0; continue; }
+      const col = RADCOL[z.color];
+      d[i] = parseInt(col.slice(1, 3), 16);
+      d[i + 1] = parseInt(col.slice(3, 5), 16);
+      d[i + 2] = parseInt(col.slice(5, 7), 16);
+      d[i + 3] = Math.min(110, 30 + z.influence * 1.1);
+    }
+  }
+  zctx.putImageData(img, 0, 0);
+}
+
+// ---- Fixed-tick sim, decoupled render ----
+let acc = 0, last = performance.now();
+function frame(now) {
+  const dtReal = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  acc += dtReal;
+  const stepLen = 1 / sim.T.tickRate;
+  while (acc >= stepLen) {
+    if (pointer.down) {
+      const u = sim.ship;
+      const w = toWorld(pointer.x, pointer.y);
+      sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
+    }
+    sim.step();
+    acc -= stepLen;
+  }
+  if (zoneDirty || (sim.T.fieldDriftSpeed > 0 && now - lastZoneRender > 100)) {
+    renderZones();
+    zoneDirty = false;
+    lastZoneRender = now;
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+function render() {
+  const W = cv.clientWidth, H = cv.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const R = sim.T.arenaRadius;
+  cam.scale = Math.min(W, H) / (R * 2.15);
+  cam.ox = W / 2; cam.oy = H / 2;
+
+  ctx.fillStyle = '#0b0e14';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(cam.ox, cam.oy);
+  ctx.scale(cam.scale, cam.scale);
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(zoneCv, -R, -R, R * 2, R * 2);
+
+  // Field rings + battery arcs
+  for (const f of sim.fields) {
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 7);
+    ctx.strokeStyle = RADCOL[f.color]; ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, 24, -Math.PI / 2, -Math.PI / 2 + Math.min(1, f.battery / 150) * Math.PI * 2);
+    ctx.strokeStyle = RADCOL[f.color]; ctx.lineWidth = 5 / cam.scale; ctx.stroke();
+  }
+
+  // Seam between fields 0 and 1 (different colors only)
+  if (sim.fields.length >= 2 && sim.fields[0].color !== sim.fields[1].color) {
+    const seam = sim.seamBetween(0, 1);
+    if (seam) {
+      ctx.beginPath(); ctx.arc(seam.x, seam.y, 8, 0, 7);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = '#1d2636'; ctx.lineWidth = 3 / cam.scale;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.stroke();
+
+  // Ship
+  const u = sim.ship;
+  if (u.state !== 'crystallized') {
+    const r = 11;
+    ctx.save();
+    ctx.translate(u.x, u.y);
+    const frac = u.energy / sim.T.energyMax;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 8, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.strokeStyle = frac > 0.5 ? '#5fd08a' : (frac > 0.2 ? '#e8c34a' : '#e85a4a');
+    ctx.lineWidth = 3.5 / cam.scale; ctx.stroke();
+    // protection color tick
+    ctx.beginPath(); ctx.arc(0, 0, r + 14, -0.4, 0.4);
+    ctx.strokeStyle = RADCOL[u.protColor]; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
+
+    ctx.rotate(u.heading);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
+    ctx.closePath();
+    ctx.fillStyle = u.state === 'crystallizing'
+      ? 'rgba(150,140,255,' + (0.4 + (u.crystallizeTimer / sim.T.crystallizeSec) * 0.6) + ')'
+      : (u.held ? '#ffffff' : '#9fd0ff');
+    ctx.fill();
+    ctx.restore();
+
+    if (u.held) {
+      ctx.beginPath();
+      ctx.moveTo(u.x, u.y);
+      ctx.lineTo(u.x + Math.cos(sim.aimAngle) * 120, u.y + Math.sin(sim.aimAngle) * 120);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.setLineDash([6, 6]); ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  ctx.restore();
+
+  const z = u.lastZone;
+  const zoneName = z && z.color ? (z.friendly ? 'friendly ' : 'hostile ') + z.color : 'open ground';
+  hud.innerHTML =
+    '<div class="big">energy ' + u.energy.toFixed(0) + '/' + sim.T.energyMax + '</div>' +
+    '<div>' + zoneName + ' · ' + (u.lastDrain > 0 ? '−' + u.lastDrain.toFixed(1) + '/s' : '+' + (-u.lastDrain).toFixed(1) + '/s') +
+    (u.maneuvering ? ' · maneuvering' : '') + '</div>' +
+    (u.state === 'crystallized' ? '<div class="big" style="color:#e85a4a">CRYSTALLIZED — tap to restart</div>' : '');
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
