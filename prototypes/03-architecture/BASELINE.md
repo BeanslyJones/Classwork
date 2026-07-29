@@ -9,8 +9,8 @@ against these numbers are the thing this gate exists to catch.
 
 | run        | mean ms | p50 ms | p99 ms | max ms | alive@end | shots |
 |------------|---------|--------|--------|--------|-----------|-------|
-| gating OFF | 0.323 | 0.273 | 0.963 | 1.337 | 22 | 2329 |
-| gating ON  | 0.292 | 0.227 | 1.014 | 1.657 | 22 | 2329 |
+| gating OFF | 0.351 | 0.285 | 1.398 | 2.025 | 22 | 2329 |
+| gating ON  | 0.308 | 0.230 | 1.061 | 2.106 | 22 | 2329 |
 
 Tier split at end (gating ON, Active/Reduced/Dormant): 0/0/22.
 Projectile pool: 2329 fired, 0 dropped, zero allocations after construction.
