@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Radiant Warfront — 06 Descent</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
+               touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  #wrap { height: 100%; display: flex; flex-direction: column; }
+  .screen { display: none; flex: 1; min-height: 0; }
+  .screen.on { display: flex; }
+  /* ---- builder ---- */
+  #build { flex-direction: column; align-items: center; padding: 10px; overflow-y: auto; }
+  #build h1 { font-size: 14px; color: #8fa3c8; letter-spacing: 1px; margin: 4px 0 8px; }
+  #gridBox { display: grid; gap: 3px; margin-bottom: 10px; }
+  .cell { width: 34px; height: 34px; border-radius: 5px; background: #131a26; border: 1px solid #232a38;
+          display: flex; align-items: center; justify-content: center; font-size: 10px; color: #8fa3c8; }
+  .cell.bad { outline: 2px solid #e85a4a; }
+  .cell.inactive { opacity: 0.45; }
+  #palette { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 420px; margin-bottom: 8px; }
+  .pal { padding: 6px 9px; border-radius: 5px; background: #1b2434; border: 1px solid #2e3a52; font-size: 11px; cursor: pointer; }
+  .pal.sel { background: #2e4a72; border-color: #4a6a9a; }
+  #stats { font-size: 12px; color: #8fa3c8; margin-bottom: 10px; text-align: center; }
+  #stats b { color: #cdd6e4; }
+  #launch { font-size: 16px; font-weight: 700; padding: 12px 34px; border-radius: 40px;
+            background: #2a4a2f; border: 1px solid #3f6a46; color: #cdd6e4; }
+  #launch:disabled { opacity: 0.4; }
+  /* ---- descent ---- */
+  #fly { position: relative; }
+  #cv { display: block; width: 100%; height: 100%; touch-action: none; }
+  #flyHud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  /* ---- landing ---- */
+  #land { flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; }
+  #land .big { font-size: 22px; font-weight: 700; }
+  #land canvas { background: #0e1420; border-radius: 8px; }
+  button.small { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="screen on" id="build">
+    <h1>06 · LOADOUT — dropship cross-section</h1>
+    <div id="gridBox"></div>
+    <div id="palette"></div>
+    <div id="stats"></div>
+    <button id="launch">LAUNCH ▼</button>
+    <div style="color:#5b6880;font-size:11px;margin-top:8px;max-width:420px;text-align:center">
+      Tap a palette module then tap cells to place (again to erase). Red outline = rule violation
+      (structure / edge / power). Faded = inactive. Heavier ships fall longer and steer worse.
+    </div>
+  </div>
+  <div class="screen" id="fly">
+    <canvas id="cv"></canvas>
+    <div id="flyHud"></div>
+  </div>
+  <div class="screen" id="land">
+    <div class="big" id="landTitle"></div>
+    <canvas id="scatterCv" width="280" height="280"></canvas>
+    <div id="landStats"></div>
+    <button class="small" id="again">Again (same seed)</button>
+    <button class="small" id="newSeed">New seed</button>
+    <button class="small" id="reBuild">Back to loadout</button>
+  </div>
+</div>
+<script src="sim.js"></script>
+<script>
+'use strict';
+const { Loadout, Descent, MODULES, TUNABLES, defaultLoadout, GRID_W, GRID_H } = DescentSim;
+
+let seed = 606;
+let loadout = defaultLoadout();
+let descent = null;
+let selected = 'hull';
+
+const screens = { build: document.getElementById('build'), fly: document.getElementById('fly'), land: document.getElementById('land') };
+function show(name) { for (const k in screens) screens[k].classList.toggle('on', k === name); }
+
+// ---- Builder ----
+const gridBox = document.getElementById('gridBox');
+gridBox.style.gridTemplateColumns = 'repeat(' + GRID_W + ', 34px)';
+const cellEls = [];
+for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) {
+  const el = document.createElement('div');
+  el.className = 'cell';
+  el.addEventListener('pointerdown', () => {
+    loadout.set(x, y, loadout.get(x, y) === selected ? null : selected);
+    refresh();
+  });
+  gridBox.appendChild(el);
+  cellEls.push({ el, x, y });
+}
+const palette = document.getElementById('palette');
+const ABBR = { hull: 'HUL', reactor: 'RCT', conduit: 'CND', thruster: 'THR', fueltank: 'FUE', cargobay: 'CRG',
+               hangar: 'HGR', shieldgen: 'SHD', radvault: 'RAD', medbay: 'MED', sensor: 'SNS', battery: 'BAT', winch: 'WNC' };
+for (const key in MODULES) {
+  const b = document.createElement('div');
+  b.className = 'pal' + (key === selected ? ' sel' : '');
+  b.textContent = ABBR[key] + ' ' + key;
+  b.title = MODULES[key].tip + ' (mass ' + MODULES[key].mass + ', power ' + MODULES[key].power + ')';
+  b.addEventListener('pointerdown', () => {
+    selected = key;
+    for (const c of palette.children) c.classList.remove('sel');
+    b.classList.add('sel');
+  });
+  palette.appendChild(b);
+}
+let evalNow = null;
+function refresh() {
+  evalNow = loadout.evaluate();
+  const byPos = {};
+  for (const r of evalNow.report) byPos[r.x + ',' + r.y] = r;
+  for (const c of cellEls) {
+    const k = loadout.get(c.x, c.y);
+    const r = byPos[c.x + ',' + c.y];
+    c.el.textContent = k ? ABBR[k] : '';
+    c.el.className = 'cell' + (r && r.problems.length ? ' bad' : '') + (r && !r.active ? ' inactive' : '');
+    c.el.title = r && r.problems.length ? r.problems.join(', ') : (k ? MODULES[k].tip : '');
+  }
+  document.getElementById('stats').innerHTML =
+    'tonnage <b>' + evalNow.tonnage.toFixed(1) + '</b> · power <b>' + evalNow.supply + '/' + evalNow.demand + '</b>' +
+    (evalNow.powered ? '' : ' <span style="color:#e85a4a">UNDERPOWERED</span>') +
+    ' · thrusters <b>' + evalNow.thrusters + '</b> · cargo bays <b>' + evalNow.cargoBays + '</b>' +
+    '<br>descent ' + (TUNABLES.descentSec.value + evalNow.tonnage * TUNABLES.descentPerTon.value).toFixed(1) + 's est · fuel +'
+    + evalNow.fuelBonus + ' · hull +' + evalNow.hullBonus;
+  document.getElementById('launch').disabled = !evalNow.launchable;
+}
+refresh();
+
+// ---- Descent ----
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const flyHud = document.getElementById('flyHud');
+let steerX = null;
+
+document.getElementById('launch').addEventListener('pointerdown', () => {
+  descent = new Descent(seed, evalNow);
+  steerX = null;
+  show('fly');
+});
+cv.addEventListener('pointerdown', e => { steerX = e.clientX; });
+cv.addEventListener('pointermove', e => { if (steerX !== null) steerX = e.clientX; });
+window.addEventListener('pointerup', () => { steerX = null; });
+window.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') keyDir = -1;
+  if (e.key === 'ArrowRight') keyDir = 1;
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'ArrowLeft' && keyDir < 0) keyDir = 0;
+  if (e.key === 'ArrowRight' && keyDir > 0) keyDir = 0;
+});
+let keyDir = 0;
+
+let acc = 0, last = performance.now();
+function frame(now) {
+  const dtReal = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (descent && !descent.done) {
+    acc += dtReal;
+    const stepLen = descent.dt;
+    while (acc >= stepLen) {
+      let v = keyDir;
+      if (steerX !== null) {
+        const W = cv.clientWidth;
+        v = ((steerX / W) - 0.5) * 3; // horizontal touch position = stick
+      }
+      descent.command({ type: 'steer', v: Math.max(-1, Math.min(1, v)) });
+      descent.step();
+      acc -= stepLen;
+    }
+    renderFly();
+    if (descent.done) showLanding();
+  }
+  requestAnimationFrame(frame);
+}
+
+function renderFly() {
+  const W = cv.clientWidth, H = cv.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+  const d = descent;
+  const scale = Math.min(1.2, W / 900);
+  const cx = W / 2;
+  const shipY = H * 0.72;
+  const lookAhead = 5; // seconds of corridor drawn ahead (below = future)
+
+  // Corridor: guide center +/- corridorHalf, scrolling upward as t advances.
+  ctx.beginPath();
+  let started = false;
+  for (let s = -2; s <= lookAhead; s += 0.1) {
+    const t = d.t + s;
+    if (t < 0) continue;
+    const gx = cx + (d.guideAt(t) - d.x) * scale;
+    const gy = shipY + s * (H * 0.62 / lookAhead) * -1; // future above? no: future scrolls DOWN toward ship
+    if (!started) { ctx.moveTo(gx, gy); started = true; } else ctx.lineTo(gx, gy);
+  }
+  ctx.strokeStyle = 'rgba(140,180,255,0.9)'; ctx.lineWidth = 2; ctx.stroke();
+  for (const side of [-1, 1]) {
+    ctx.beginPath(); started = false;
+    for (let s = -2; s <= lookAhead; s += 0.2) {
+      const t = d.t + s;
+      if (t < 0) continue;
+      const gx = cx + (d.guideAt(t) + side * d.T.corridorHalf - d.x) * scale;
+      const gy = shipY - s * (H * 0.62 / lookAhead);
+      if (!started) { ctx.moveTo(gx, gy); started = true; } else ctx.lineTo(gx, gy);
+    }
+    ctx.strokeStyle = 'rgba(90,110,150,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  // Ship, fixed at center-x (world scrolls around it)
+  const err = Math.abs(d.x - d.guideAt(d.t));
+  ctx.save();
+  ctx.translate(cx, shipY);
+  ctx.beginPath();
+  ctx.moveTo(0, -16); ctx.lineTo(11, 10); ctx.lineTo(0, 4); ctx.lineTo(-11, 10);
+  ctx.closePath();
+  ctx.fillStyle = err > d.T.corridorHalf ? '#e85a4a' : '#9fd0ff';
+  ctx.fill();
+  ctx.restore();
+
+  const prog = Math.min(1, d.t / d.duration);
+  ctx.fillStyle = '#1d2636'; ctx.fillRect(0, H - 6, W, 6);
+  ctx.fillStyle = '#5fd08a'; ctx.fillRect(0, H - 6, W * prog, 6);
+
+  flyHud.innerHTML =
+    '<div style="font-size:18px;font-weight:600">DESCENT ' + Math.round(prog * 100) + '%</div>' +
+    '<div>fuel ' + d.fuel.toFixed(0) + ' · hull ' + d.hull.toFixed(0) +
+    (err > d.T.corridorHalf ? ' · <span style="color:#e85a4a">OUT OF CORRIDOR</span>' : '') + '</div>' +
+    '<div style="color:#5b6880">drag left/right (or arrow keys) to hold the line</div>';
+}
+
+// ---- Landing ----
+function showLanding() {
+  const r = descent.result;
+  show('land');
+  document.getElementById('landTitle').textContent = r.crashed ? 'HULL LOST — CRASHED' : 'TOUCHDOWN';
+  document.getElementById('landTitle').style.color = r.crashed ? '#e85a4a' : '#5fd08a';
+  document.getElementById('landStats').innerHTML =
+    'avg tracking error <b>' + r.avgErr.toFixed(1) + '</b> → scatter radius <b>' + r.scatter.toFixed(0) + '</b>' +
+    '<br>arrival fuel <b>' + (r.fuelFrac * 100).toFixed(0) + '%</b> · arrival hull <b>' + (r.hullFrac * 100).toFixed(0) + '%</b>' +
+    '<br>landed <b>' + Math.hypot(r.offsetX, r.offsetY).toFixed(0) + '</b> from the mark';
+  const c = document.getElementById('scatterCv');
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, 280, 280);
+  const sc = 120 / Math.max(60, r.scatter);
+  g.strokeStyle = '#2e3a52'; g.setLineDash([4, 4]);
+  g.beginPath(); g.arc(140, 140, r.scatter * sc, 0, 7); g.stroke();
+  g.setLineDash([]);
+  g.strokeStyle = '#5b6880';
+  g.beginPath(); g.moveTo(132, 140); g.lineTo(148, 140); g.moveTo(140, 132); g.lineTo(140, 148); g.stroke();
+  g.fillStyle = r.crashed ? '#e85a4a' : '#5fd08a';
+  g.beginPath(); g.arc(140 + r.offsetX * sc, 140 + r.offsetY * sc, 7, 0, 7); g.fill();
+}
+document.getElementById('again').addEventListener('pointerdown', () => { descent = new Descent(seed, evalNow); show('fly'); });
+document.getElementById('newSeed').addEventListener('pointerdown', () => {
+  seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  descent = new Descent(seed, evalNow); show('fly');
+});
+document.getElementById('reBuild').addEventListener('pointerdown', () => { show('build'); refresh(); });
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
