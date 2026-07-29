@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Radiant Warfront — 01 Juggle</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #wrap { display: flex; height: 100%; }
+  #stage { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #panel { width: 270px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
+  #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
+  #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
+  .tun { margin-bottom: 8px; }
+  .tun label { display: flex; justify-content: space-between; cursor: help; }
+  .tun label span.val { color: #8fa3c8; }
+  .tun input { width: 100%; }
+  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  #hud .big { font-size: 20px; font-weight: 600; }
+  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+  button:hover { background: #253150; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+  </div>
+  <div id="panel">
+    <h1>01 · THE JUGGLE</h1>
+    <div class="hint">
+      Hold mouse near a ship to grab it. Drag to aim (heading is from the ship, not the cursor). Release to fling — full momentum restored.<br><br>
+      Keys 1–4: grab that ship directly. R: restart. N: new seed.<br><br>
+      Drain is the clock. Stopped ships crystallize. Crystals kill on contact. Dead ships become crystals.
+    </div>
+    <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
+    <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES <span style="color:#5b6880">(hover for tooltip)</span></div>
+    <div id="tunables"></div>
+  </div>
+</div>
+<script src="sim.js"></script>
+<script>
+'use strict';
+const { Sim, TUNABLES, mulberry32 } = JuggleSim;
+
+let seed = 1337;
+let overrides = {};
+let sim = new Sim(seed, overrides);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+
+// ---- Tunables panel: mirrors the Unity Inspector. Structural ones need restart. ----
+const STRUCTURAL = new Set(['shipCount', 'hazardCount', 'hazardBandInner', 'hazardRadiusMin', 'hazardRadiusMax', 'spawnRadius', 'tickRate']);
+const tunDiv = document.getElementById('tunables');
+for (const key in TUNABLES) {
+  const t = TUNABLES[key];
+  const row = document.createElement('div');
+  row.className = 'tun';
+  const step = (t.max - t.min) > 20 ? 1 : 0.005;
+  row.innerHTML = '<label title="' + t.tooltip + '">' + key + (STRUCTURAL.has(key) ? ' *' : '') +
+    '<span class="val" id="v_' + key + '">' + t.value + '</span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + step + '" value="' + t.value + '" id="s_' + key + '">';
+  tunDiv.appendChild(row);
+  row.querySelector('input').addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    overrides[key] = v;
+    document.getElementById('v_' + key).textContent = v;
+    if (!STRUCTURAL.has(key)) sim.T[key] = v; // live; * = applied on restart
+  });
+}
+
+function restart(newSeed) {
+  if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0; // dev shell only — the sim itself stays seeded
+  sim = new Sim(seed, overrides);
+  survivalTime = 0;
+  best = Math.max(best, 0);
+}
+
+// ---- Input: keyboard/mouse dev surface for the DualSense scheme. ----
+let mouse = { x: 0, y: 0, down: false };
+let cam = { scale: 1, ox: 0, oy: 0 };
+function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
+
+cv.addEventListener('mousedown', e => {
+  mouse.down = true;
+  const w = toWorld(e.offsetX, e.offsetY);
+  let bestU = null, bestD = Infinity;
+  for (const u of sim.units) {
+    if (u.state !== 'alive') continue;
+    const d = Math.hypot(u.x - w.x, u.y - w.y);
+    if (d < bestD) { bestD = d; bestU = u; }
+  }
+  if (bestU) sim.command({ type: 'grab', unit: bestU.id });
+});
+cv.addEventListener('mousemove', e => { mouse.x = e.offsetX; mouse.y = e.offsetY; });
+window.addEventListener('mouseup', () => { if (mouse.down) { mouse.down = false; sim.command({ type: 'release' }); } });
+window.addEventListener('keydown', e => {
+  if (e.key >= '1' && e.key <= '9') { sim.command({ type: 'grab', unit: parseInt(e.key, 10) - 1 }); mouse.down = true; }
+  if (e.key === 'r' || e.key === 'R') restart(false);
+  if (e.key === 'n' || e.key === 'N') restart(true);
+});
+window.addEventListener('keyup', e => {
+  if (e.key >= '1' && e.key <= '9' && mouse.down) { mouse.down = false; sim.command({ type: 'release' }); }
+});
+
+// ---- Fixed-tick sim, decoupled render (same separation the server build needs). ----
+let acc = 0, last = performance.now();
+let survivalTime = 0, best = 0;
+
+function frame(now) {
+  const dtReal = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  acc += dtReal;
+  const stepLen = 1 / sim.T.tickRate;
+  while (acc >= stepLen) {
+    if (mouse.down && sim.heldUnit >= 0) {
+      const u = sim.units[sim.heldUnit];
+      const w = toWorld(mouse.x, mouse.y);
+      sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
+    }
+    sim.step();
+    if (sim.aliveCount() > 0) { survivalTime += stepLen; best = Math.max(best, survivalTime); }
+    acc -= stepLen;
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+function render() {
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const R = sim.T.arenaRadius;
+  cam.scale = Math.min(W, H) / (R * 2.15);
+  cam.ox = W / 2; cam.oy = H / 2;
+
+  ctx.fillStyle = '#0b0e14';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(cam.ox, cam.oy);
+  ctx.scale(cam.scale, cam.scale);
+
+  // Arena edge + safe disc
+  ctx.strokeStyle = '#1d2636'; ctx.lineWidth = 3 / cam.scale;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, 7); ctx.stroke();
+  ctx.strokeStyle = '#141b28';
+  ctx.beginPath(); ctx.arc(0, 0, sim.T.hazardBandInner, 0, 7); ctx.stroke();
+
+  // Crystals (visual shape seeded per-hazard from coords — never touches sim rng)
+  for (const h of sim.hazards) {
+    const vr = mulberry32(((h.x * 73856093) ^ (h.y * 19349663)) >>> 0);
+    ctx.beginPath();
+    const spikes = 5 + Math.floor(vr() * 3);
+    for (let i = 0; i <= spikes * 2; i++) {
+      const a = (i / (spikes * 2)) * Math.PI * 2;
+      const rr = h.r * (i % 2 === 0 ? 1 : 0.55 + vr() * 0.2);
+      ctx[i === 0 ? 'moveTo' : 'lineTo'](h.x + Math.cos(a) * rr, h.y + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fillStyle = h.salvage ? 'rgba(190,120,255,0.30)' : 'rgba(120,180,255,0.16)';
+    ctx.strokeStyle = h.salvage ? '#b87aff' : '#4f7fc0';
+    ctx.lineWidth = 1.5 / cam.scale;
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Ships
+  for (const u of sim.units) {
+    if (u.state === 'crystallized') continue;
+    const r = sim.T.unitRadius;
+    ctx.save();
+    ctx.translate(u.x, u.y);
+
+    // Momentum ring — the at-a-glance juggle readout
+    if (u.state === 'alive') {
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 7, -Math.PI / 2, -Math.PI / 2 + u.momentum * Math.PI * 2);
+      ctx.strokeStyle = u.momentum > 0.5 ? '#5fd08a' : (u.momentum > 0.2 ? '#e8c34a' : '#e85a4a');
+      ctx.lineWidth = 3 / cam.scale;
+      ctx.stroke();
+      if (u.momentum <= 0) { // stalled: grace countdown flash
+        const f = 1 - u.stallTimer / sim.T.stallGraceSec;
+        ctx.beginPath(); ctx.arc(0, 0, r + 12, 0, 7);
+        ctx.strokeStyle = 'rgba(232,90,74,' + (0.4 + 0.6 * Math.abs(Math.sin(sim.tick * 0.3))) + ')';
+        ctx.lineWidth = (2 + 3 * (1 - f)) / cam.scale;
+        ctx.stroke();
+      }
+    }
+
+    ctx.rotate(u.heading);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
+    ctx.closePath();
+    if (u.state === 'crystallizing') {
+      const f = u.crystallizeTimer / sim.T.crystallizeSec;
+      ctx.fillStyle = 'rgba(150,140,255,' + (0.4 + f * 0.6) + ')';
+    } else {
+      ctx.fillStyle = u.held ? '#ffffff' : '#9fd0ff';
+    }
+    ctx.fill();
+    ctx.restore();
+
+    // Ship number tag
+    ctx.fillStyle = '#5b6880';
+    ctx.font = (12 / cam.scale) + 'px system-ui';
+    ctx.fillText(String(u.id + 1), u.x + r + 4, u.y - r - 4);
+  }
+
+  // Aim line while holding
+  if (sim.heldUnit >= 0) {
+    const u = sim.units[sim.heldUnit];
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(u.x + Math.cos(sim.aimAngle) * 130, u.y + Math.sin(sim.aimAngle) * 130);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 2 / cam.scale;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+
+  const alive = sim.aliveCount();
+  hud.innerHTML =
+    '<div class="big">' + alive + '/' + sim.units.length + ' alive</div>' +
+    '<div>survived ' + survivalTime.toFixed(1) + 's · best ' + best.toFixed(1) + 's · seed ' + seed + '</div>' +
+    (alive === 0 ? '<div class="big" style="color:#e85a4a">ALL CRYSTALLIZED — R to restart</div>' : '');
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
