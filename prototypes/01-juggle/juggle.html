@@ -2,12 +2,23 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Radiant Warfront — 01 Juggle</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
-  #wrap { display: flex; height: 100%; }
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
+               touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  #wrap { display: flex; height: 100%; position: relative; }
   #stage { flex: 1; position: relative; }
-  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  #panelToggle { display: none; position: absolute; top: 10px; right: 10px; z-index: 10;
+                 font-size: 18px; padding: 6px 12px; }
+  @media (max-width: 700px) {
+    #panelToggle { display: block; }
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
+             transform: translateX(100%); transition: transform .2s; box-shadow: -8px 0 24px rgba(0,0,0,.5); }
+    #panel.open { transform: none; }
+  }
   #panel { width: 270px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
   #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
   #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
@@ -26,12 +37,13 @@
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="hud"></div>
+    <button id="panelToggle">⚙</button>
   </div>
   <div id="panel">
     <h1>01 · THE JUGGLE</h1>
     <div class="hint">
-      Hold mouse near a ship to grab it. Drag to aim (heading is from the ship, not the cursor). Release to fling — full momentum restored.<br><br>
-      Keys 1–4: grab that ship directly. R: restart. N: new seed.<br><br>
+      Mouse or touch: press near a ship to grab it. Drag to aim (heading is from the ship, not your finger). Lift to fling — full momentum restored.<br><br>
+      Keys 1–4: grab that ship directly. R: restart. N: new seed. When all ships are gone, tap anywhere to restart.<br><br>
       Drain is the clock. Stopped ships crystallize. Crystals kill on contact. Dead ships become crystals.
     </div>
     <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
@@ -79,14 +91,21 @@ function restart(newSeed) {
   best = Math.max(best, 0);
 }
 
-// ---- Input: keyboard/mouse dev surface for the DualSense scheme. ----
-let mouse = { x: 0, y: 0, down: false };
+// ---- Input: pointer events cover mouse AND touch (iPhone) with one path. ----
+// First pointer down owns the grab; extra touches are ignored until it lifts.
+let pointer = { x: 0, y: 0, down: false, id: -1 };
 let cam = { scale: 1, ox: 0, oy: 0 };
 function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
+function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
-cv.addEventListener('mousedown', e => {
-  mouse.down = true;
-  const w = toWorld(e.offsetX, e.offsetY);
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (pointer.down) return;
+  if (sim.aliveCount() === 0) { restart(false); return; }
+  const p = localXY(e);
+  pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
+  cv.setPointerCapture(e.pointerId);
+  const w = toWorld(p.x, p.y);
   let bestU = null, bestD = Infinity;
   for (const u of sim.units) {
     if (u.state !== 'alive') continue;
@@ -95,15 +114,31 @@ cv.addEventListener('mousedown', e => {
   }
   if (bestU) sim.command({ type: 'grab', unit: bestU.id });
 });
-cv.addEventListener('mousemove', e => { mouse.x = e.offsetX; mouse.y = e.offsetY; });
-window.addEventListener('mouseup', () => { if (mouse.down) { mouse.down = false; sim.command({ type: 'release' }); } });
+cv.addEventListener('pointermove', e => {
+  if (pointer.down && e.pointerId !== pointer.id) return;
+  const p = localXY(e);
+  pointer.x = p.x; pointer.y = p.y;
+});
+function endPointer(e) {
+  if (!pointer.down || e.pointerId !== pointer.id) return;
+  pointer.down = false; pointer.id = -1;
+  sim.command({ type: 'release' });
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', endPointer);
+
 window.addEventListener('keydown', e => {
-  if (e.key >= '1' && e.key <= '9') { sim.command({ type: 'grab', unit: parseInt(e.key, 10) - 1 }); mouse.down = true; }
+  if (e.repeat) return; // key auto-repeat would re-grab and stomp the aim
+  if (e.key >= '1' && e.key <= '9') { sim.command({ type: 'grab', unit: parseInt(e.key, 10) - 1 }); pointer.down = true; }
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
 });
 window.addEventListener('keyup', e => {
-  if (e.key >= '1' && e.key <= '9' && mouse.down) { mouse.down = false; sim.command({ type: 'release' }); }
+  if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; sim.command({ type: 'release' }); }
+});
+
+document.getElementById('panelToggle').addEventListener('click', () => {
+  document.getElementById('panel').classList.toggle('open');
 });
 
 // ---- Fixed-tick sim, decoupled render (same separation the server build needs). ----
@@ -116,9 +151,9 @@ function frame(now) {
   acc += dtReal;
   const stepLen = 1 / sim.T.tickRate;
   while (acc >= stepLen) {
-    if (mouse.down && sim.heldUnit >= 0) {
+    if (pointer.down && sim.heldUnit >= 0) {
       const u = sim.units[sim.heldUnit];
-      const w = toWorld(mouse.x, mouse.y);
+      const w = toWorld(pointer.x, pointer.y);
       sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
     }
     sim.step();
@@ -131,7 +166,11 @@ function frame(now) {
 
 function render() {
   const W = cv.clientWidth, H = cv.clientHeight;
-  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px; backing store stays retina
   const R = sim.T.arenaRadius;
   cam.scale = Math.min(W, H) / (R * 2.15);
   cam.ox = W / 2; cam.oy = H / 2;
