@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Radiant Warfront — 08 Weather</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
+               touch-action: none; -webkit-user-select: none; user-select: none; }
+  #wrap { display: flex; height: 100%; position: relative; }
+  #stage { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panelToggle { display: none; position: absolute; top: 10px; right: 10px; z-index: 10; font-size: 18px; padding: 6px 12px; }
+  @media (max-width: 700px) {
+    #panelToggle { display: block; }
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
+             transform: translateX(100%); transition: transform .2s; }
+    #panel.open { transform: none; }
+  }
+  #panel { width: 270px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
+  #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
+  #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
+  .tun { margin-bottom: 8px; }
+  .tun label { display: flex; justify-content: space-between; cursor: help; }
+  .tun label span.val { color: #8fa3c8; }
+  .tun input { width: 100%; }
+  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; font-size: 12px; }
+  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <button id="panelToggle">⚙</button>
+  </div>
+  <div id="panel">
+    <h1>08 · WEATHER (skeleton)</h1>
+    <div class="hint">
+      Four immiscible gases partitioning the whole sky. Cohesion is structural —
+      drag it to 0 and watch the soup form. Bloom (pink) is deliberately the weak
+      gas. The sim is a director: the HUD lists live pair-fronts as parameter sets.
+      Same seed = same sky, always.
+    </div>
+    <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
+    <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES</div>
+    <div id="tunables"></div>
+  </div>
+</div>
+<script src="sim.js"></script>
+<script>
+'use strict';
+const { Sim, TUNABLES, GASES } = WeatherSim;
+const COL = { cinder: [255, 122, 69], bloom: [226, 103, 216], brine: [63, 201, 160], halo: [232, 210, 122] };
+
+let seed = 88;
+let overrides = {};
+let sim = new Sim(seed, overrides);
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+
+const STRUCTURAL = new Set(['worldSize', 'parcelsPerGas', 'tickRate']);
+const tunDiv = document.getElementById('tunables');
+for (const key in TUNABLES) {
+  const t = TUNABLES[key];
+  const row = document.createElement('div');
+  row.className = 'tun';
+  const step = (t.max - t.min) > 20 ? 1 : 0.005;
+  row.innerHTML = '<label title="' + t.tooltip + '">' + key + (STRUCTURAL.has(key) ? ' *' : '') +
+    '<span class="val" id="v_' + key + '">' + t.value + '</span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + step + '" value="' + t.value + '" id="s_' + key + '">';
+  tunDiv.appendChild(row);
+  row.querySelector('input').addEventListener('input', e => {
+    const v = parseFloat(e.target.value);
+    overrides[key] = v;
+    document.getElementById('v_' + key).textContent = v;
+    if (!STRUCTURAL.has(key)) sim.T[key] = v;
+  });
+}
+function restart(newSeed) {
+  if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  sim = new Sim(seed, overrides);
+}
+document.getElementById('btnRestart').addEventListener('click', () => restart(false));
+document.getElementById('btnSeed').addEventListener('click', () => restart(true));
+document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
+window.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') restart(false);
+  if (e.key === 'n' || e.key === 'N') restart(true);
+});
+
+// Ownership layer at coarse res, upscaled by the client — mirroring the funnel:
+// the director never paints pixels for you.
+const RES = 72;
+const zoneCv = document.createElement('canvas');
+zoneCv.width = RES; zoneCv.height = RES;
+const zctx = zoneCv.getContext('2d');
+
+let acc = 0, last = performance.now();
+function frame(now) {
+  const dtReal = Math.min(0.2, (now - last) / 1000);
+  last = now;
+  acc += dtReal;
+  const stepLen = 1 / sim.T.tickRate;
+  let stepped = 0;
+  while (acc >= stepLen && stepped < 8) { sim.step(); acc -= stepLen; stepped++; }
+
+  const S = sim.T.worldSize;
+  const img = zctx.createImageData(RES, RES);
+  const d = img.data;
+  for (let gy = 0; gy < RES; gy++) for (let gx = 0; gx < RES; gx++) {
+    const g = sim.gasAt((gx + 0.5) * S / RES, (gy + 0.5) * S / RES);
+    const c = COL[GASES[g]];
+    const i = (gy * RES + gx) * 4;
+    d[i] = c[0] * 0.55; d[i + 1] = c[1] * 0.55; d[i + 2] = c[2] * 0.55; d[i + 3] = 255;
+  }
+  zctx.putImageData(img, 0, 0);
+
+  const W = cv.clientWidth, H = cv.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const side = Math.min(W, H);
+  const ox = (W - side) / 2, oy = (H - side) / 2;
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(zoneCv, ox, oy, side, side);
+
+  for (const p of sim.parcels) {
+    const c = COL[GASES[p.gas]];
+    ctx.beginPath();
+    ctx.arc(ox + p.x / S * side, oy + p.y / S * side, 3, 0, 7);
+    ctx.fillStyle = 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+    ctx.fill();
+  }
+
+  const fronts = sim.fronts().slice(0, 4);
+  hud.innerHTML = '<div style="font-size:16px;font-weight:600">tick ' + sim.tick + ' · seed ' + seed + '</div>' +
+    fronts.map(f => f.pair.join('/') + ' front · length ' + f.length.toFixed(0) +
+      ' · ' + (f.intensity * 100).toFixed(1) + '% of sky').join('<br>');
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
