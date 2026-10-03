@@ -410,9 +410,10 @@ function battle(seed, useBot, ticks) {
   const fmt = s => 'wins ' + s.wins + '/' + N + ', avg foes left ' + (s.foes / N).toFixed(1) + ', avg ship-seconds ' + (s.ss / N).toFixed(0);
   console.log('    neglected: ' + fmt(sum.n));
   console.log('    juggled:   ' + fmt(sum.j));
-  assert(sum.j.wins >= sum.n.wins + 3, 'juggling wins clearly more battles');
+  // With wide turns most battles are still going at 90s, so judge by kills.
+  const killsN = 6 * N - sum.n.foes, killsJ = 6 * N - sum.j.foes;
   assert(sum.j.ss > sum.n.ss * 1.3, 'juggling buys >30% more ship-seconds');
-  assert(sum.j.foes < sum.n.foes, 'neglected team also loses the damage race');
+  assert(killsJ >= killsN * 1.5, 'juggling kills far more enemies (' + (killsJ / N).toFixed(1) + ' vs ' + (killsN / N).toFixed(1) + ' per battle)');
 }
 
 // --- 8. Pool + soak. --------------------------------------------------------

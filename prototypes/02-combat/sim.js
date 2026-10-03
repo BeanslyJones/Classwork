@@ -14,14 +14,15 @@
   const TUNABLES = {
     tickRate:        { value: 30,    min: 10,  max: 120,  tooltip: 'Fixed sim ticks per second.' },
     arenaRadius:     { value: 560,   min: 200, max: 2000, tooltip: 'Soft arena radius. No boundary death.' },
-    aiReactSec:      { value: 2.5,   min: 0,   max: 5,    tooltip: 'AI reaction time: each AI ship re-picks its heading this often and turns toward that in between — it juggles like a player instead of steering every ship every tick.' },
+    aiReactSec:      { value: 6,   min: 0,   max: 5,    tooltip: 'AI reaction time: each AI ship re-picks its heading this often and turns toward that in between — it juggles like a player instead of steering every ship every tick.' },
     edgeSteer:       { value: 2.2,   min: 0,   max: 10,   tooltip: 'Corrective turn (rad/s) past the soft edge.' },
     minSpeed:        { value: 50,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
     momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
     driftNoise:      { value: 1.4,   min: 0,   max: 8,    tooltip: 'Heading wobble (rad/s) at zero momentum.' },
     stallGraceSec:   { value: 2.5,   min: 0.5, max: 10,   tooltip: 'Seconds a stalled unit can still be saved.' },
     crystallizeSec:  { value: 1.2,   min: 0.1, max: 5,    tooltip: 'Seconds from fatal blow to crystallized salvage.' },
-    hazardCount:     { value: 5,     min: 0,   max: 30,   tooltip: 'Seeded crystal formations. Projectiles detonate on them (cover). Reset to apply.' },
+    hazardCount:     { value: 0,     min: 0,   max: 30,   tooltip: 'Seeded crystal formations (off for now). Projectiles detonate on them (cover). Reset to apply.' },
+    wreckCrystals:   { value: 0,     min: 0,   max: 1,    tooltip: '1 = dead ships leave a crystal wreck that kills on contact and blocks shots (off for now).' },
     hazardBandInner: { value: 220,   min: 50,  max: 1000, tooltip: 'Crystal-free inner disc radius.' },
     hazardRadiusMin: { value: 24,    min: 5,   max: 100,  tooltip: 'Smallest crystal radius.' },
     hazardRadiusMax: { value: 48,    min: 5,   max: 160,  tooltip: 'Largest crystal radius.' },
@@ -397,7 +398,7 @@
         u.crystallizeTimer += dt;
         if (u.crystallizeTimer >= T.crystallizeSec) {
           u.state = CRYSTALLIZED;
-          this.hazards.push({ x: u.x, y: u.y, r: T.unitRadius * 1.6, salvage: true });
+          if (T.wreckCrystals) this.hazards.push({ x: u.x, y: u.y, r: T.unitRadius * 1.6, salvage: true });
           this.events.push({ type: 'crystallized', unit: u.id, tick: this.tick });
         }
         continue;

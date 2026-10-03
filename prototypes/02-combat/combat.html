@@ -15,6 +15,13 @@
   #dodgeBtn { position: absolute; bottom: 22px; right: 22px; z-index: 8; font-size: 15px; font-weight: 700;
               padding: 18px 22px; border-radius: 50px; background: #23304a; border: 1px solid #3a4a6a; color: #cdd6e4; }
   #dodgeBtn:active { background: #3a4a6a; }
+  #focusBtn { position: absolute; bottom: 96px; right: 30px; z-index: 8; font-size: 13px; font-weight: 700;
+              padding: 12px 14px; border-radius: 40px; background: #1d2638; border: 1px solid #3a4a6a; color: #cdd6e4; }
+  #rotate { display: none; position: fixed; inset: 0; z-index: 50; background: #0b0e14; color: #cdd6e4;
+            flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 24px; }
+  #rotate .phone { width: 46px; height: 80px; border: 3px solid #8fa3c8; border-radius: 9px; animation: tilt 1.8s ease-in-out infinite; }
+  @keyframes tilt { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+  @media (orientation: portrait) and (pointer: coarse) { body:not(.portrait-ok) #rotate { display: flex; } }
   #speedBox { position: absolute; bottom: 22px; left: 16px; z-index: 8; background: rgba(16,20,29,.85);
               border: 1px solid #2e3a52; border-radius: 10px; padding: 8px 12px; width: 200px; }
   #speedBox label { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
@@ -32,7 +39,7 @@
   #camBar button.on { background: #3a4a6a; border-color: #6c86b8; color: #fff; }
   @media (max-width: 700px) { #camBar { top: 56px; right: 10px; } body.net #camBar { top: 96px; } }
   .sect { margin: 14px 0 4px; color: #8fa3c8; }
-  @media (max-width: 700px) {
+  @media (max-width: 700px), (max-height: 500px) {
     #panelToggle { display: block; }
     #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
              transform: translateX(100%); transition: transform .2s; box-shadow: -8px 0 24px rgba(0,0,0,.5); }
@@ -49,9 +56,27 @@
   #hud .big { font-size: 20px; font-weight: 600; }
   button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
   button:hover { background: #253150; }
+  /* Phone held sideways: compact corners so both thumbs reach controls and the
+     middle stays clear for the fight. */
+  @media (max-height: 500px) {
+    #speedBox { width: 170px; padding: 6px 10px; bottom: 10px; left: max(10px, env(safe-area-inset-left)); }
+    #speedBox .row button { padding: 5px 0; }
+    #dodgeBtn { bottom: 14px; right: max(14px, env(safe-area-inset-right)); padding: 20px 24px; }
+    #focusBtn { bottom: 88px; right: max(20px, env(safe-area-inset-right)); }
+    #camBar { top: 8px; right: 62px; width: 196px; }
+    body.net #camBar { top: 8px; }
+    #hud { left: max(10px, env(safe-area-inset-left)); }
+    #hud .big { font-size: 17px; }
+  }
 </style>
 </head>
 <body>
+<div id="rotate">
+  <div class="phone"></div>
+  <div style="font-size:17px;font-weight:600">Turn your phone sideways</div>
+  <div style="color:#8fa3c8;max-width:280px">Played in landscape: steer with one thumb, DODGE and REFOCUS with the other.</div>
+  <button id="portraitOk">Play upright anyway</button>
+</div>
 <div id="wrap">
   <div id="stage">
     <canvas id="cv"></canvas>
@@ -63,6 +88,7 @@
         <input type="range" id="camZoomIn"></div>
     </div>
     <button id="dodgeBtn">DODGE</button>
+    <button id="focusBtn" title="Refocus: drop the lock so the next ship into the arc is targeted (F)">REFOCUS</button>
     <div id="speedBox">
       <label>Game speed <span id="speedVal">0.5×</span></label>
       <input type="range" id="speed" min="0.1" max="2" step="0.05" value="0.5">
@@ -86,6 +112,8 @@
       magnifies around it. Grabbing a ship selects it; tap empty space to deselect
       (closes the bubble). The slider under the buttons is the current mode's zoom.
       Ships hidden under the bubble show through as outlines.<br><br>
+      Built for landscape: one thumb drags ships, the other hits DODGE and REFOCUS
+      (bottom right). The bubble magnifies the middle of the selected ship's firing arc.<br><br>
       Capitals have weak points (rings on the hull): bridge (nose) kills the turret,
       engines (tail) cripple speed, vents (sides) bleed energy. Hits there do extra damage.
     </div>
@@ -156,6 +184,17 @@ document.getElementById('btnRestart').addEventListener('click', () => restart(fa
 document.getElementById('btnSeed').addEventListener('click', () => restart(true));
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
 document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'dodge' }); });
+document.getElementById('focusBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'refocus' }); });
+document.getElementById('portraitOk').addEventListener('click', () => {
+  document.body.classList.add('portrait-ok');
+  try { localStorage.setItem('rw02.portraitOk', '1'); } catch (e) {}
+});
+try { if (localStorage.getItem('rw02.portraitOk') === '1') document.body.classList.add('portrait-ok'); } catch (e) {}
+// Where supported (Android Chrome in fullscreen), pin landscape on first touch.
+window.addEventListener('pointerdown', function lockOnce() {
+  window.removeEventListener('pointerdown', lockOnce);
+  try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {}
+}, { once: true });
 
 // ---- Game speed: scales real time fed to the fixed-tick sim. The sim itself is
 // untouched (same ticks, same results), it just advances slower or faster. ----
@@ -466,8 +505,17 @@ function render(dtReal) {
   // Bubble: magnify around the current ship, drawn over the wide view.
   const wantBubble = camMode === 'bubble' && fu ? 1 : 0;
   camState.bubble += (wantBubble - camState.bubble) * (1 - Math.exp(-dtReal * camCfg.bubbleGrow));
+  // Centre it on the middle of the ship's firing arc (in front of it), glided so
+  // it doesn't whip around as the ship turns.
+  if (fu) {
+    const fc = CLASSES[fu.cls], ahead = fc.coneRange * 0.5;
+    const ax = fu.x + Math.cos(fu.gunAngle) * ahead, ay = fu.y + Math.sin(fu.gunAngle) * ahead;
+    if (camState.bubble <= 0.02 || camState.bx === undefined) { camState.bx = ax; camState.by = ay; }
+    camState.bx += (ax - camState.bx) * k; camState.by += (ay - camState.by) * k;
+  }
   if (camState.bubble > 0.02 && fu) {
-    const sx = cam.ox + fu.x * cam.scale, sy = cam.oy + fu.y * cam.scale;
+    const bcx = camState.bx, bcy = camState.by;
+    const sx = cam.ox + bcx * cam.scale, sy = cam.oy + bcy * cam.scale;
     const br = camCfg.bubbleSize * camState.bubble;
     const main = { scale: cam.scale, ox: cam.ox, oy: cam.oy };
     ctx.save();
@@ -475,16 +523,16 @@ function render(dtReal) {
     ctx.fillStyle = 'rgba(13,17,25,0.82)'; ctx.fillRect(sx - br, sy - br, br * 2, br * 2);
     const zoomS = main.scale * camCfg.bubbleZoom;
     cam.scale = zoomS;
-    cam.ox = sx - fu.x * cam.scale; cam.oy = sy - fu.y * cam.scale;
+    cam.ox = sx - bcx * cam.scale; cam.oy = sy - bcy * cam.scale;
     drawWorld();
     cam.scale = main.scale; cam.ox = main.ox; cam.oy = main.oy;
     // Ghosts: ships under the bubble whose magnified image falls outside it would
     // otherwise vanish. Draw them where they really are, as bright outlines.
     for (const u of sim.units) {
-      if (u.state !== 'alive' || u === fu) continue;
+      if (u.state !== 'alive') continue;
       const wx = main.ox + u.x * main.scale, wy = main.oy + u.y * main.scale;
       if (Math.hypot(wx - sx, wy - sy) > br) continue;              // not under the bubble
-      const mx = sx + (u.x - fu.x) * zoomS, my = sy + (u.y - fu.y) * zoomS;
+      const mx = sx + (u.x - bcx) * zoomS, my = sy + (u.y - bcy) * zoomS;
       if (Math.hypot(mx - sx, my - sy) < br - 6) continue;           // already visible magnified
       const gr = Math.max(7, sim.T.unitRadius * CLASSES[u.cls].size * main.scale * 1.2);
       ctx.save();
