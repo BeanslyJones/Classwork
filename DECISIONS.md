@@ -119,3 +119,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Holding the target in the arc improves the lock up to that cap. A better lock
   improves accuracy (spread), target leading, and fire rate.
 - **Torpedo bomber class**: slow shots, built to kill capital ships.
+
+## 13. Combat pacing
+- **No auto-turning.** Ships you aren't flying never steer themselves toward
+  enemies. Instead, fixed guns get **wide auto-fire arcs** and bend shots within
+  the arc toward the target.
+- **Time to kill:** about **3 seconds** for small ships, about **10 seconds** for
+  a capital (one attacker, sustained fire). Torpedo bombers kill a capital in ~5s.

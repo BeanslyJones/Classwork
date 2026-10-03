@@ -27,8 +27,6 @@
     unitRadius:      { value: 10,    min: 4,   max: 30,   tooltip: 'Unit collision radius (art scale decoupled).' },
     avoidRange:      { value: 90,    min: 0,   max: 300,  tooltip: 'Crystal evasion range for unheld ships.' },
     avoidSteer:      { value: 3.0,   min: 0,   max: 12,   tooltip: 'Max evasion turn (rad/s), scaled by momentum.' },
-    assistArc:       { value: 1.0,   min: 0,   max: 3.14, tooltip: 'Unflown ships nose toward enemies within this angle (radians) of their heading.' },
-    assistTurn:      { value: 0.8,   min: 0,   max: 6,    tooltip: 'Max nose-assist turn (rad/s) for unflown ships, scaled by momentum (fades as they slow).' },
     heldTurnRate:    { value: 6.0,   min: 1,   max: 20,   tooltip: 'Rad/s the held unit turns toward the aim angle.' },
     lockTimeFull:    { value: 1.6,   min: 0.2, max: 6,    tooltip: 'Seconds held in the arc to climb from the starting lock to its ceiling.' },
     lockSpreadMax:   { value: 0.35,  min: 0,   max: 1.5,  tooltip: 'Aim error (radians) at zero lock. Spread scales down with lock quality.' },
@@ -45,7 +43,7 @@
     dodgeLockoutSec: { value: 0.8,   min: 0,   max: 3,    tooltip: 'Turn lockout after the roll — readable and interceptable.' },
     projTtlSec:      { value: 2.2,   min: 0.5, max: 6,    tooltip: 'Projectile lifetime; flak detonates at end of life.' },
     weakCritMult:    { value: 2.5,   min: 1,   max: 6,    tooltip: 'Damage multiplier when a blast lands on a capital weak point.' },
-    weakHp:          { value: 45,    min: 5,   max: 300,  tooltip: 'Damage a weak point absorbs before it is knocked out.' },
+    weakHp:          { value: 120,    min: 5,   max: 300,  tooltip: 'Damage a weak point absorbs before it is knocked out.' },
     ventLeak:        { value: 3,     min: 0,   max: 20,   tooltip: 'Energy/sec a capital bleeds per breached reactor vent.' },
     engineCripple:   { value: 0.5,   min: 0.1, max: 1,    tooltip: 'Speed and turn multiplier once a capital loses its engines.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
@@ -54,6 +52,9 @@
   };
 
   // Shared class table — the SAME rows drive player ships and opposition.
+  // Tuned for time-to-kill (one attacker, sustained fire, centre entry):
+  // ~3s on small ships (interceptor ~2s .. heavy ~3.5s), ~10s on a capital
+  // (torpedo bomber ~5s). Re-measure with the TTK test if you change a row.
   // Unity port: one ScriptableObject per row; numbers become [Range] fields there.
   // turret: only capital ships carry a rotating turret. Everything else has
   // fixed forward guns — the cone points where the hull points, so to shoot
@@ -61,21 +62,21 @@
   // size: collision radius multiplier on unitRadius.
   const CLASSES = {
     fighter:     { speed: 150, turnRate: 2.6, energyMax: 100, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.35, coneRange: 230, cooldown: 0.50, shotCost: 2.0, damage: 6,  aoe: 26, projSpeed: 330 },
-    bomber:      { speed: 100, turnRate: 1.6, energyMax: 170, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.50, coneRange: 270, cooldown: 1.60, shotCost: 6.0, damage: 18, aoe: 72, projSpeed: 180 },
-    heavy:       { speed: 112, turnRate: 1.1, energyMax: 210, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.16, coneRange: 320, cooldown: 0.80, shotCost: 4.0, damage: 14, aoe: 18, projSpeed: 430 },
-    interceptor: { speed: 215, turnRate: 3.6, energyMax: 60,  turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.40, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 4,  aoe: 16, projSpeed: 370 },
-    aaa:         { speed: 70,  turnRate: 1.0, energyMax: 150, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 1.10, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 3,  aoe: 36, projSpeed: 260 },
+                   coneHalf: 0.65, coneRange: 230, cooldown: 0.50, shotCost: 2.0, damage: 16,  aoe: 26, projSpeed: 330 },
+    bomber:      { speed: 100, turnRate: 1.6, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 0.80, coneRange: 270, cooldown: 1.60, shotCost: 6.0, damage: 57.5, aoe: 72, projSpeed: 180 },
+    heavy:       { speed: 112, turnRate: 1.1, energyMax: 125, turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 0.45, coneRange: 320, cooldown: 0.80, shotCost: 4.0, damage: 41.5, aoe: 18, projSpeed: 430 },
+    interceptor: { speed: 215, turnRate: 3.6, energyMax: 58,  turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 0.70, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 10.5,  aoe: 16, projSpeed: 370 },
+    aaa:         { speed: 70,  turnRate: 1.0, energyMax: 105, turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 1.40, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 9.2,  aoe: 36, projSpeed: 260 },
     // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
     // sidestep but a lumbering capital can't. vsCapital multiplies damage on
     // capitals; projTtl lets the slow torpedo actually reach its range.
-    torpedo:     { speed: 90,  turnRate: 1.2, energyMax: 190, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.30, coneRange: 300, cooldown: 2.40, shotCost: 7.0, damage: 22, aoe: 28, projSpeed: 105,
-                   vsCapital: 3.0, projTtl: 3.4 },
+    torpedo:     { speed: 90,  turnRate: 1.2, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 0.55, coneRange: 300, cooldown: 2.40, shotCost: 7.0, damage: 66, aoe: 28, projSpeed: 105,
+                   vsCapital: 2.9, projTtl: 3.4 },
     // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
     // weakPoints: spots on the hull in hull-local units of the ship's radius
     // (+x = nose). A blast landing on one does weakCritMult damage and wears
@@ -83,8 +84,8 @@
     //   bridge -> turret fire control offline   engine -> speed/turn crippled
     //   vent   -> hull bleeds energy (ventLeak)
     // Different capital types are just different rows with different layouts.
-    capital:     { speed: 45,  turnRate: 0.45, energyMax: 520, turret: true,  gunTurn: 1.8, size: 2.2,
-                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 12, aoe: 30, projSpeed: 300,
+    capital:     { speed: 45,  turnRate: 0.45, energyMax: 625, turret: true,  gunTurn: 1.8, size: 2.2,
+                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 44, aoe: 30, projSpeed: 300,
                    weakPoints: [
                      { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
                      { type: 'engine', x: -1.0,  y: 0,     r: 0.45 },
@@ -398,20 +399,6 @@
         // Unpossessed player ship: the juggle clock runs.
         u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
         u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
-        // Nose assist: fixed guns need the nose on target. An unflown ship eases
-        // toward the nearest enemy roughly ahead of it — weaker as momentum fades,
-        // so neglect still costs. Turrets don't need it.
-        if (!cls.turret && T.assistTurn > 0 && u.tier < 2) {
-          let best = null, bestD = Infinity;
-          for (const v of this.units) {
-            if (v.team === u.team || v.state !== ALIVE) continue;
-            const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy);
-            if (d > cls.coneRange * 1.3 || d >= bestD) continue;
-            if (Math.abs(wrapAngle(Math.atan2(dy, dx) - u.heading)) > T.assistArc) continue;
-            best = v; bestD = d;
-          }
-          if (best) u.heading = turnToward(u.heading, Math.atan2(best.y - u.y, best.x - u.x), T.assistTurn * u.momentum * dt);
-        }
       } else {
         // Opposition AI: same class table, seeks nearest player ship to gun range.
         if (u.tier < 2) {

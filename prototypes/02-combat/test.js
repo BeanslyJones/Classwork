@@ -200,7 +200,8 @@ function duel(roster, extra) {
     return e0 - v.energy;
   }
   const vsCap = hit('capital'), vsHeavy = hit('heavy');
-  assert(vsCap >= vsHeavy * 2.9, 'torpedo does ~3x to capitals (' + vsCap.toFixed(1) + ' vs ' + vsHeavy.toFixed(1) + ' on a heavy)');
+  const mult = CLASSES.torpedo.vsCapital;
+  assert(Math.abs(vsCap - vsHeavy * mult) < 0.01, 'torpedo does ' + mult + 'x to capitals (' + vsCap.toFixed(1) + ' vs ' + vsHeavy.toFixed(1) + ' on a heavy)');
   // Enemy torpedo AI goes for the capital even when a small ship is closer.
   const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: PLAYER }, { cls: 'torpedo', team: ENEMY }]);
   const [f, cap, tb] = s.units;
@@ -210,25 +211,33 @@ function duel(roster, extra) {
   assert(tb.heading > 0, 'enemy torpedo bomber turns toward the capital, not the nearer fighter');
 }
 
-// --- 5e. Nose assist: unflown fixed-gun ships ease onto enemies ahead. ------
+// --- 5f. Time to kill: ~3s on small ships, ~10s on a capital. ----------------
 {
-  console.log('\n[nose assist]');
-  function run(momentum) {
-    const s = duel([{ cls: 'heavy', team: PLAYER }, { cls: 'fighter', team: ENEMY }]);
-    const [h, f] = s.units;
-    h.x = 0; h.y = 0; h.heading = 0; h.momentum = momentum;
-    let fired = 0;
-    for (let i = 0; i < 60; i++) {
-      f.x = h.x + 200; f.y = h.y + 60; f.heading = 0; // 17 deg off the nose, pacing it
+  console.log('\n[time to kill]');
+  // One attacker, nose on, target parked dead centre at 60% range, sustained fire.
+  function ttk(att, tgt) {
+    const s = new Sim(7, { hazardCount: 0, driftNoise: 0, momentumDrain: 0, autoFireFloor: 0 },
+      [{ cls: att, team: PLAYER }, { cls: tgt, team: ENEMY }]);
+    const [a, b] = s.units; a.energy = 1e6;
+    const d = CLASSES[att].coneRange * 0.6;
+    for (let t = 0; t < TICK_RATE * 60; t++) {
+      a.x = 0; a.y = 0; a.heading = 0; a.vx = a.vy = 0; if (!CLASSES[att].turret) a.gunAngle = 0;
+      b.x = d; b.y = 0; b.heading = Math.PI / 2; b.vx = b.vy = 0;
       s.step();
-      for (const e of s.events) if (e.type === 'fired' && e.unit === h.id) fired++;
+      if (b.state !== 'alive') return t / TICK_RATE;
     }
-    return { heading: h.heading, fired: fired };
+    return Infinity;
   }
-  const full = run(1), none = run(0.0001);
-  assert(full.heading > 0.2, 'unflown heavy noses toward an enemy off its bow (' + full.heading.toFixed(2) + ' rad)');
-  assert(full.fired > 0, 'and gets shots off (' + full.fired + ')');
-  assert(none.heading < full.heading * 0.2, 'assist fades with momentum (neglect still costs)');
+  const small = ['fighter', 'interceptor', 'bomber', 'heavy', 'aaa', 'torpedo'];
+  const gunships = ['fighter', 'interceptor', 'bomber', 'heavy', 'aaa', 'capital'];
+  let lo = Infinity, hi = 0;
+  for (const a of gunships) for (const t of small) { const v = ttk(a, t); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  assert(lo >= 1.5 && hi <= 4.5, 'small ships die in ~3s (range ' + lo.toFixed(1) + '-' + hi.toFixed(1) + 's)');
+  const capT = ['fighter', 'interceptor', 'bomber', 'aaa'].map(a => ttk(a, 'capital'));
+  const capAvg = capT.reduce((x, y) => x + y, 0) / capT.length;
+  assert(capAvg > 8 && capAvg < 12, 'capital takes ~10s (avg ' + capAvg.toFixed(1) + 's)');
+  const torp = ttk('torpedo', 'capital');
+  assert(torp < Math.min(...capT, ttk('heavy', 'capital')), 'torpedo bomber is the fastest capital killer (' + torp.toFixed(1) + 's)');
 }
 
 // --- 5b. Only capitals have turrets. ----------------------------------------
@@ -317,8 +326,9 @@ function duel(roster, extra) {
 }
 
 // --- 7. GATE: neglect visibly costs. ----------------------------------------
-// Same battle, two pilots: nobody home vs. a bot that juggles + flings ships
-// away from the nearest threat. Neglect must lose harder and faster.
+// Same battle, two pilots: nobody home vs. a bot that juggles — grabs the
+// slowest ship and flings it nose-first at the nearest enemy (fixed guns only
+// shoot what the nose points at). Neglect must lose harder and faster.
 function battle(seed, useBot, ticks) {
   const sim = new Sim(seed);
   const botRng = mulberry32(seed ^ 0xF00D);
@@ -332,15 +342,15 @@ function battle(seed, useBot, ticks) {
       }
       if (worst) {
         sim.command({ type: 'grab', unit: worst.id });
-        // Fling away from the nearest enemy, jittered.
+        // Fling at the nearest enemy, jittered.
         let foe = null, fd = Infinity;
         for (const v of sim.units) {
           if (v.team !== ENEMY || v.state !== 'alive') continue;
           const d = Math.hypot(v.x - worst.x, v.y - worst.y);
           if (d < fd) { fd = d; foe = v; }
         }
-        const away = foe ? Math.atan2(worst.y - foe.y, worst.x - foe.x) : Math.atan2(-worst.y, -worst.x);
-        sim.command({ type: 'aim', angle: away + (botRng() - 0.5) * 0.8 });
+        const at = foe ? Math.atan2(foe.y - worst.y, foe.x - worst.x) : Math.atan2(-worst.y, -worst.x);
+        sim.command({ type: 'aim', angle: at + (botRng() - 0.5) * 0.4 });
         sim.command({ type: 'release' });
       }
     }
@@ -350,14 +360,24 @@ function battle(seed, useBot, ticks) {
   return { alive: sim.aliveCount(PLAYER), foesLeft: sim.aliveCount(ENEMY), shipSeconds: shipSeconds, energy: sim.teamEnergy(PLAYER) };
 }
 {
-  console.log('\n[GATE: neglect visibly costs]  (6v6 incl. capitals + torpedo bombers, 2700 ticks = 90s)');
-  const neglect = battle(SEED, false, 2700);
-  const juggled = battle(SEED, true, 2700);
-  console.log('    neglected: alive ' + neglect.alive + '/6, foes left ' + neglect.foesLeft + ', ship-seconds ' + neglect.shipSeconds.toFixed(0));
-  console.log('    juggled:   alive ' + juggled.alive + '/6, foes left ' + juggled.foesLeft + ', ship-seconds ' + juggled.shipSeconds.toFixed(0));
-  assert(juggled.alive > neglect.alive, 'juggling keeps more ships alive than neglect');
-  assert(juggled.shipSeconds > neglect.shipSeconds * 1.3, 'juggling buys >30% more ship-seconds');
-  assert(neglect.alive === 0 || neglect.foesLeft > juggled.foesLeft, 'neglected team also loses the damage race');
+  // One battle is a coin flip at 3-second kills; judge over 10 seeds.
+  console.log('\n[GATE: neglect visibly costs]  (6v6, 10 battles x 90s)');
+  const N = 10;
+  const sum = { n: { ss: 0, wins: 0, foes: 0 }, j: { ss: 0, wins: 0, foes: 0 } };
+  for (let i = 1; i <= N; i++) {
+    const seed = i * 977;
+    for (const [k, bot] of [['n', false], ['j', true]]) {
+      const r = battle(seed, bot, 2700);
+      sum[k].ss += r.shipSeconds; sum[k].foes += r.foesLeft;
+      if (r.foesLeft === 0 && r.alive > 0) sum[k].wins++;
+    }
+  }
+  const fmt = s => 'wins ' + s.wins + '/' + N + ', avg foes left ' + (s.foes / N).toFixed(1) + ', avg ship-seconds ' + (s.ss / N).toFixed(0);
+  console.log('    neglected: ' + fmt(sum.n));
+  console.log('    juggled:   ' + fmt(sum.j));
+  assert(sum.j.wins >= sum.n.wins + 3, 'juggling wins clearly more battles');
+  assert(sum.j.ss > sum.n.ss * 1.3, 'juggling buys >30% more ship-seconds');
+  assert(sum.j.foes < sum.n.foes, 'neglected team also loses the damage race');
 }
 
 // --- 8. Pool + soak. --------------------------------------------------------
