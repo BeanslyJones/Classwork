@@ -23,6 +23,10 @@ Gate proxies are headless bots; the feel gates still need hands on the sticks.
 
 ## Open forks — waiting on the owner (never decided silently)
 
+**Answered — see `DECISIONS.md`.** All nine forks below now have owner answers
+(camera partly deferred to playtest). The prototypes have not been updated to
+match yet.
+
 Descent energy-bank · battery-vs-field upgrade path · third no-drain condition
 in friendly field · per-class dodge specials · outfit shared IFF · artillery
 circle grow-vs-tighten · camera quadrant-split vs light overlay · opposition
