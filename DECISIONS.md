@@ -94,3 +94,7 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   its own weight, so bigger parts get more rolls.
 - Goal: no repeating the same build every run. "You gotta work with what you
   got": loadouts are built from what you actually find, salvage and own.
+- **Each cell rolls all three:** (1) how much it adds to the part's main stat,
+  (2) a weighted chance at a bonus trait (e.g. faster recharge, collapsing
+  battery, bigger crowd cap), and (3) its own neighbour bonus/penalty, so the
+  same part can be strong or weak depending on where it's placed.
