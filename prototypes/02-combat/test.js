@@ -115,6 +115,101 @@ function duel(roster, extra) {
   assert(spreads[spreads.length - 1] === 0 || spreads[spreads.length - 1] < 0.01, 'full lock -> (near) zero spread');
 }
 
+// --- 5a. Arc-entry lock: entry quality frozen, improvement capped, buys aim + rate.
+{
+  console.log('\n[arc-entry lock]');
+  // A held heavy facing +x; one foe parked dead centre of the arc, one at the edge.
+  function entry(offsetFrac) {
+    const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'heavy', team: ENEMY }],
+      { lockTimeFull: 1.0 });
+    const [a, b] = s.units;
+    s.command({ type: 'grab', unit: a.id });
+    s.command({ type: 'aim', angle: 0 });
+    a.x = 0; a.y = 0; a.heading = 0; a.gunAngle = 0;
+    const ang = CLASSES.fighter.coneHalf * offsetFrac;
+    b.x = Math.cos(ang) * 150; b.y = Math.sin(ang) * 150; b.heading = ang; // flying straight away inside the arc
+    s.step();
+    const start = a.lockQ, cap = a.lockCap;
+    let peak = 0;
+    for (let i = 0; i < 90; i++) {
+      s.command({ type: 'aim', angle: 0 });
+      // keep the target pinned at its entry bearing so it stays in the arc
+      b.x = a.x + Math.cos(ang) * 150; b.y = a.y + Math.sin(ang) * 150;
+      s.step();
+      peak = Math.max(peak, a.lockQ);
+    }
+    return { entryQ: a.entryQ, start: start, cap: cap, peak: peak };
+  }
+  const centre = entry(0.0), edge = entry(0.92);
+  assert(centre.entryQ > 0.95 && edge.entryQ < 0.15, 'entry quality frozen at entry: centre ' + centre.entryQ.toFixed(2) + ', edge ' + edge.entryQ.toFixed(2));
+  assert(centre.start < centre.peak, 'lock improves while held in the arc (' + centre.start.toFixed(2) + ' -> ' + centre.peak.toFixed(2) + ')');
+  assert(Math.abs(centre.peak - 1) < 1e-9, 'centre entry can reach full lock');
+  assert(edge.peak <= edge.cap + 1e-9 && edge.peak < 0.45, 'edge entry is capped low (peak ' + edge.peak.toFixed(2) + ')');
+
+  // Fire rate climbs with lock: shot intervals shrink as the lock builds.
+  {
+    const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'heavy', team: ENEMY }], { autoFireFloor: 0 });
+    const [a, b] = s.units;
+    s.command({ type: 'grab', unit: a.id });
+    a.x = 0; a.y = 0; a.heading = 0; a.gunAngle = 0; a.energy = 1e6;
+    const ticks = [];
+    for (let i = 0; i < 300; i++) {
+      s.command({ type: 'aim', angle: 0 });
+      b.x = a.x + 150; b.y = a.y; b.energy = 1e6;
+      s.step();
+      for (const e of s.events) if (e.type === 'fired' && e.unit === a.id) ticks.push(s.tick);
+    }
+    const first = ticks[1] - ticks[0], last = ticks[ticks.length - 1] - ticks[ticks.length - 2];
+    assert(last < first, 'reload shortens as lock builds (' + first + ' -> ' + last + ' ticks between shots)');
+  }
+
+  // Leading: against a crossing target, a full lock aims ahead of it, zero lock aims at it.
+  {
+    function shotAngle(lockQ) {
+      const s = duel([{ cls: 'capital', team: PLAYER }, { cls: 'fighter', team: ENEMY }], { lockSpreadMax: 0 });
+      const [a, b] = s.units;
+      a.x = 0; a.y = 0; a.heading = Math.PI / 2; a.gunAngle = 0;
+      b.x = 200; b.y = 0; b.heading = Math.PI / 2; // crossing upward
+      s.step(); // acquire
+      a.lockCap = 1; a.lockQ = lockQ; a.cooldown = 0; a.gunAngle = 0;
+      a.energy = CLASSES.capital.energyMax;
+      for (let i = 0; i < 40; i++) {
+        if (lockQ === 0) { a.lockQ = 0; a.lockCap = 0; }
+        s.step();
+        for (const e of s.events) if (e.type === 'fired' && e.unit === a.id) return a.gunAngle;
+      }
+      return null;
+    }
+    const zero = shotAngle(0), full = shotAngle(1);
+    assert(zero !== null && full !== null && full > zero + 0.05, 'full lock leads the target (' + (zero || 0).toFixed(3) + ' vs ' + (full || 0).toFixed(3) + ' rad)');
+  }
+}
+
+// --- 5d. Torpedo bomber: slow shots that wreck capitals. -----------------------
+{
+  console.log('\n[torpedo bomber]');
+  assert(CLASSES.torpedo.projSpeed < Math.min(...Object.keys(CLASSES).filter(k => k !== 'torpedo').map(k => CLASSES[k].projSpeed)),
+    'torpedo has the slowest shots in the fleet');
+  function hit(targetCls) {
+    const s = duel([{ cls: 'torpedo', team: PLAYER }, { cls: targetCls, team: ENEMY }]);
+    const v = s.units[1];
+    v.x = 0; v.y = 0; v.heading = 0;
+    for (const w of v.weak) w.out = true; // keep weak points out of the comparison
+    const e0 = v.energy;
+    s._detonate({ active: true, x: 0, y: 0, damage: 22, aoe: 28, team: PLAYER, owner: 0, vsCap: CLASSES.torpedo.vsCapital });
+    return e0 - v.energy;
+  }
+  const vsCap = hit('capital'), vsHeavy = hit('heavy');
+  assert(vsCap >= vsHeavy * 2.9, 'torpedo does ~3x to capitals (' + vsCap.toFixed(1) + ' vs ' + vsHeavy.toFixed(1) + ' on a heavy)');
+  // Enemy torpedo AI goes for the capital even when a small ship is closer.
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: PLAYER }, { cls: 'torpedo', team: ENEMY }]);
+  const [f, cap, tb] = s.units;
+  tb.x = 0; tb.y = 0; tb.heading = Math.PI / 2;
+  f.x = 0; f.y = -150; cap.x = 0; cap.y = 400;
+  for (let i = 0; i < 20; i++) s.step();
+  assert(tb.heading > 0, 'enemy torpedo bomber turns toward the capital, not the nearer fighter');
+}
+
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');
@@ -234,11 +329,11 @@ function battle(seed, useBot, ticks) {
   return { alive: sim.aliveCount(PLAYER), foesLeft: sim.aliveCount(ENEMY), shipSeconds: shipSeconds, energy: sim.teamEnergy(PLAYER) };
 }
 {
-  console.log('\n[GATE: neglect visibly costs]  (5v5 incl. capitals, 2700 ticks = 90s)');
+  console.log('\n[GATE: neglect visibly costs]  (6v6 incl. capitals + torpedo bombers, 2700 ticks = 90s)');
   const neglect = battle(SEED, false, 2700);
   const juggled = battle(SEED, true, 2700);
-  console.log('    neglected: alive ' + neglect.alive + '/5, foes left ' + neglect.foesLeft + ', ship-seconds ' + neglect.shipSeconds.toFixed(0));
-  console.log('    juggled:   alive ' + juggled.alive + '/5, foes left ' + juggled.foesLeft + ', ship-seconds ' + juggled.shipSeconds.toFixed(0));
+  console.log('    neglected: alive ' + neglect.alive + '/6, foes left ' + neglect.foesLeft + ', ship-seconds ' + neglect.shipSeconds.toFixed(0));
+  console.log('    juggled:   alive ' + juggled.alive + '/6, foes left ' + juggled.foesLeft + ', ship-seconds ' + juggled.shipSeconds.toFixed(0));
   assert(juggled.alive > neglect.alive, 'juggling keeps more ships alive than neglect');
   assert(juggled.shipSeconds > neglect.shipSeconds * 1.3, 'juggling buys >30% more ship-seconds');
   assert(neglect.alive === 0 || neglect.foesLeft > juggled.foesLeft, 'neglected team also loses the damage race');

@@ -112,3 +112,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   layouts, turret setups).
 - 02's current `capital` class is a placeholder stand-in for this: one generic
   hull, no weak points, AI-flown on the enemy side.
+
+## 12. Aiming — ARC-ENTRY LOCK (same as the tank game)
+- Target = first enemy to enter the firing arc; entry quality is frozen at
+  entry (centre good, edge bad) and caps how good the lock can get.
+- Holding the target in the arc improves the lock up to that cap. A better lock
+  improves accuracy (spread), target leading, and fire rate.
+- **Torpedo bomber class**: slow shots, built to kill capital ships.

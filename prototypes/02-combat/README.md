@@ -1,9 +1,9 @@
 # 02 · Combat (build order step 2)
 
 The juggle from 01 with guns on it. One shared class table drives both teams —
-fighter, bomber, heavy, interceptor, AAA, capital — players juggle theirs, the
-opposition AI pilots the same rows. Default battle is 5v5: four fixed-gun ships
-plus one capital per side.
+fighter, bomber, heavy, interceptor, AAA, torpedo, capital — players juggle
+theirs, the opposition AI pilots the same rows. Default battle is 6v6: five
+fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
 
 ## Run
 
@@ -24,9 +24,19 @@ plus one capital per side.
 - Cooldown only ticks while a valid target is in the cone.
 - Targeting enemy-only; friendly fire is a separate toggle, off by default.
 - All projectiles AoE with falloff (anti-clumping); crystals detonate shots (cover).
-- Spread scales with lock quality (zero at full lock, `lockTimeFull`).
-- First-to-enter-cone target priority, sticky while in cone (+ grace), `refocus`
-  command drops the lock.
+- **Arc-entry lock** (same model as the tank game). First enemy to enter the
+  arc is the target, sticky while in the arc (+ grace); `refocus` drops it.
+  How centred it was at entry is frozen (`entryQ`: 1 dead centre, 0 edge; for
+  turrets, measured off the barrel over `turretEntryArc`) and sets the lock's
+  ceiling (`lockEntryFloor` at the edge up to 1). The lock starts at
+  `lockStartFrac` of that ceiling and climbs to it over `lockTimeFull` while the
+  target stays in the arc — never past it. Lock quality buys three things:
+  tighter spread (zero at full lock), target leading (`leadMax`), and faster
+  reloads (`fireRateBonus`). Fixed guns can bend a shot within their arc toward
+  the led point; turrets slew onto it.
+- **Torpedo bomber**: slowest shots in the fleet (105 vs 180+), 3x damage to
+  capitals (`vsCapital`), long-lived torpedoes (`projTtl`). Small ships can
+  sidestep them; capitals can't. Enemy torpedo AI hunts capitals first.
 - **Only capital ships have turrets.** Every other class has fixed forward guns:
   the cone points where the hull points, so you aim by flying at the target.
   Fixed-gun AI flies strafing runs (nose on target, peel off when close, come
@@ -46,9 +56,10 @@ plus one capital per side.
 
 ## Gate
 
-**Does neglect visibly cost?** Headless proxy (5v5 with capitals, 90s, seed
-4242): neglected team wiped with 3 foes standing (172 ship-seconds);
-bot-juggled team kept 2 alive and left 1 foe (263 ship-seconds). Costs, visibly.
+**Does neglect visibly cost?** Headless proxy (6v6 with capitals and torpedo
+bombers, 90s, seed 4242): neglected team wiped with 4 foes standing (225
+ship-seconds); bot-juggled team kept 4 alive and left 2 foes (430
+ship-seconds). Costs, visibly.
 With fixed guns an unflown ship rarely lines up a shot, so neglect now costs
 firepower as well as ships.
 

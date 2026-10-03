@@ -66,8 +66,11 @@
       Blue = yours, red = opposition (same class table). Only capitals (big ships) have
       turrets; every other ship's guns fire straight ahead, so aim by pointing the ship. Press near a blue ship to grab, drag to aim, lift to fling.
       DODGE (or Space) barrel-rolls the held ship: straight line, big energy cost, turn lockout after.<br><br>
-      Guns are automatic: cones acquire first entrant, cooldown only ticks on a valid target, spread tightens with lock.
-      One energy pool = health + ammo + boost. F: refocus. 1–5: grab bank. R: restart. N: new seed.
+      Guns are automatic and lock the first enemy to enter the arc. Where it entered sets the lock's ceiling:
+      dead centre can reach a full lock, the edge stays weak. Holding it in the arc builds the lock, which
+      tightens spread, leads the target and speeds up reloads. Lock line: green = centre entry, red = edge;
+      brighter = stronger lock. Torpedo bombers (6) fire slow torpedoes that do 3× to capitals.
+      One energy pool = health + ammo + boost. F: refocus. 1–6: grab bank. R: restart. N: new seed.
       Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
       Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
       <b>Snap</b> zooms to the ship you're flying (or last flew), <b>Bubble</b> keeps
@@ -379,7 +382,7 @@ function drawWorld() {
   for (const u of sim.units) {
     if (u.state === 'crystallized') continue;
     const cls = CLASSES[u.cls];
-    const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
+    const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
     ctx.translate(u.x, u.y);
 
@@ -415,6 +418,9 @@ function drawWorld() {
     if (cls.turret) { // capital: blunt slab hull
       ctx.moveTo(r * 1.3, 0); ctx.lineTo(r * 0.6, r * 0.7); ctx.lineTo(-r, r * 0.7);
       ctx.lineTo(-r, -r * 0.7); ctx.lineTo(r * 0.6, -r * 0.7);
+    } else if (cls.vsCapital) { // torpedo bomber: stubby, twin-tube silhouette
+      ctx.moveTo(r * 1.2, r * 0.35); ctx.lineTo(r * 1.2, -r * 0.35); ctx.lineTo(-r, -r * 0.9);
+      ctx.lineTo(-r * 0.6, 0); ctx.lineTo(-r, r * 0.9);
     } else {
       ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
     }
@@ -465,11 +471,40 @@ function drawWorld() {
     }
   }
 
-  // Projectiles
-  ctx.fillStyle = '#ffe9a8';
+  // Lock lines (your ships): colour = entry quality, strength = current lock.
+  for (const u of sim.units) {
+    if (u.team !== PLAYER || u.state !== 'alive' || u.targetId < 0) continue;
+    const t = sim.units[u.targetId];
+    if (!t || t.state !== 'alive') continue;
+    const hue = Math.round(120 * u.entryQ); // 0 red .. 120 green
+    ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(t.x, t.y);
+    ctx.strokeStyle = 'hsla(' + hue + ',85%,55%,' + (0.15 + 0.65 * u.lockQ) + ')';
+    ctx.lineWidth = (1 + 2.5 * u.lockQ) / cam.scale;
+    ctx.stroke();
+    if (u.held) { // lock meter around the target for the ship you're flying
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, sim.T.unitRadius * CLASSES[t.cls].size + 16, -Math.PI / 2, -Math.PI / 2 + u.lockCap * Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, sim.T.unitRadius * CLASSES[t.cls].size + 16, -Math.PI / 2, -Math.PI / 2 + u.lockQ * Math.PI * 2);
+      ctx.strokeStyle = 'hsl(' + hue + ',85%,60%)'; ctx.stroke();
+    }
+  }
+
+  // Projectiles (torpedoes: big, slow, red-orange with a trail)
   for (const p of sim.projectiles) {
     if (!p.active) continue;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
+    if (p.vsCap > 1) {
+      const sp = Math.hypot(p.vx, p.vy) || 1;
+      ctx.beginPath();
+      ctx.moveTo(p.x - p.vx / sp * 16, p.y - p.vy / sp * 16); ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = 'rgba(255,120,60,0.5)'; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
+      ctx.fillStyle = '#ff7a3c';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 7); ctx.fill();
+    } else {
+      ctx.fillStyle = '#ffe9a8';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
+    }
   }
 
   // Detonation flashes (weak point knockouts are the big white ones)

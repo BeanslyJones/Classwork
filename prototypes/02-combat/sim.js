@@ -28,8 +28,13 @@
     avoidRange:      { value: 90,    min: 0,   max: 300,  tooltip: 'Crystal evasion range for unheld ships.' },
     avoidSteer:      { value: 3.0,   min: 0,   max: 12,   tooltip: 'Max evasion turn (rad/s), scaled by momentum.' },
     heldTurnRate:    { value: 6.0,   min: 1,   max: 20,   tooltip: 'Rad/s the held unit turns toward the aim angle.' },
-    lockTimeFull:    { value: 1.6,   min: 0.2, max: 6,    tooltip: 'Seconds a target must stay in cone for zero spread.' },
+    lockTimeFull:    { value: 1.6,   min: 0.2, max: 6,    tooltip: 'Seconds held in the arc to climb from the starting lock to its ceiling.' },
     lockSpreadMax:   { value: 0.35,  min: 0,   max: 1.5,  tooltip: 'Aim error (radians) at zero lock. Spread scales down with lock quality.' },
+    lockEntryFloor:  { value: 0.35,  min: 0,   max: 1,    tooltip: 'Lock ceiling for a target that entered at the very edge of the arc. Dead-centre entry = 1.' },
+    lockStartFrac:   { value: 0.3,   min: 0,   max: 1,    tooltip: 'Lock starts at this fraction of its ceiling, then climbs over lockTimeFull.' },
+    turretEntryArc:  { value: 1.57,  min: 0.2, max: 3.14, tooltip: 'Turrets: how far off the barrel (radians) counts as a worst-case entry.' },
+    leadMax:         { value: 1.0,   min: 0,   max: 1.5,  tooltip: 'Target leading at full lock (1 = aims exactly where the target will be).' },
+    fireRateBonus:   { value: 0.6,   min: 0,   max: 2,    tooltip: 'Extra fire rate at full lock (0.6 = reloads 60% faster).' },
     coneGraceSec:    { value: 0.5,   min: 0,   max: 3,    tooltip: 'Seconds a target may slip out of cone before the lock is dropped.' },
     autoFireFloor:   { value: 0.15,  min: 0,   max: 0.9,  tooltip: 'Ships hold fire below this energy fraction — shooting spends the same pool that keeps them alive.' },
     dodgeCost:       { value: 18,    min: 0,   max: 100,  tooltip: 'Flat energy cost of a barrel roll. Big on purpose.' },
@@ -63,6 +68,12 @@
                    coneHalf: 0.40, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 4,  aoe: 16, projSpeed: 370 },
     aaa:         { speed: 70,  turnRate: 1.0, energyMax: 150, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 1.10, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 3,  aoe: 36, projSpeed: 260 },
+    // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
+    // sidestep but a lumbering capital can't. vsCapital multiplies damage on
+    // capitals; projTtl lets the slow torpedo actually reach its range.
+    torpedo:     { speed: 90,  turnRate: 1.2, energyMax: 190, turret: false, gunTurn: 0, size: 1,
+                   coneHalf: 0.30, coneRange: 300, cooldown: 2.40, shotCost: 7.0, damage: 22, aoe: 28, projSpeed: 105,
+                   vsCapital: 3.0, projTtl: 3.4 },
     // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
     // weakPoints: spots on the hull in hull-local units of the ship's radius
     // (+x = nose). A blast landing on one does weakCritMult damage and wears
@@ -100,16 +111,16 @@
   const ALIVE = 'alive', CRYSTALLIZING = 'crystallizing', CRYSTALLIZED = 'crystallized';
   const PLAYER = 0, ENEMY = 1;
 
-  // roster: array of {cls, team}. Default: mirror 5v5 — four fixed-gun ships
-  // plus one turreted capital per side.
+  // roster: array of {cls, team}. Default: mirror 6v6 — five fixed-gun ships
+  // (incl. a torpedo bomber) plus one turreted capital per side.
   function defaultRoster() {
     return [
       { cls: 'fighter', team: PLAYER }, { cls: 'bomber', team: PLAYER },
       { cls: 'heavy', team: PLAYER }, { cls: 'interceptor', team: PLAYER },
-      { cls: 'capital', team: PLAYER },
+      { cls: 'capital', team: PLAYER }, { cls: 'torpedo', team: PLAYER },
       { cls: 'fighter', team: ENEMY }, { cls: 'bomber', team: ENEMY },
       { cls: 'heavy', team: ENEMY }, { cls: 'interceptor', team: ENEMY },
-      { cls: 'capital', team: ENEMY },
+      { cls: 'capital', team: ENEMY }, { cls: 'torpedo', team: ENEMY },
     ];
   }
 
@@ -168,7 +179,12 @@
         gunAngle: baseAng + Math.PI,
         momentum: 1, stallTimer: 0, crystallizeTimer: 0,
         energy: cls.energyMax,
-        targetId: -1, lockTime: 0, outOfConeTime: 0, cooldown: cls.cooldown,
+        targetId: -1, outOfConeTime: 0, cooldown: cls.cooldown,
+        // Arc-entry lock: entryQ = how centred the target was when it entered
+        // the arc (1 = dead centre, 0 = edge), frozen at entry. lockCap is the
+        // ceiling that entry allows; lockQ climbs toward it while held in the arc.
+        entryQ: 0, lockCap: 0, lockQ: 0,
+        vx: 0, vy: 0,
         enteredConeTick: new Array(list.length).fill(-1),
         dodgeTimer: 0, lockoutTimer: 0,
         beingShotTimer: 0, // set when damaged; drives the "being shot" attrition condition later
@@ -182,7 +198,7 @@
     const CAP = 256;
     this.projectiles = new Array(CAP);
     for (let i = 0; i < CAP; i++) {
-      this.projectiles[i] = { active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0 };
+      this.projectiles[i] = { active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1 };
     }
     this.poolStats = { fired: 0, dropped: 0 };
   }
@@ -224,7 +240,7 @@
         // Drop the current lock so the first NEW cone entrant takes priority.
         const u = this.heldUnit >= 0 ? this.units[this.heldUnit] : null;
         if (!u) continue;
-        u.targetId = -1; u.lockTime = 0; u.outOfConeTime = 0;
+        u.targetId = -1; u.lockQ = 0; u.lockCap = 0; u.entryQ = 0; u.outOfConeTime = 0;
         u.enteredConeTick.fill(-1);
         this.events.push({ type: 'refocus', unit: u.id, tick: this.tick });
       }
@@ -271,9 +287,10 @@
     p.active = true;
     p.x = u.x; p.y = u.y;
     p.vx = Math.cos(angle) * cls.projSpeed; p.vy = Math.sin(angle) * cls.projSpeed;
-    p.ttl = this.T.projTtlSec;
     p.owner = u.id; p.team = u.team;
     p.damage = cls.damage; p.aoe = cls.aoe;
+    p.ttl = cls.projTtl || this.T.projTtlSec;
+    p.vsCap = cls.vsCapital || 1;
     this.poolStats.fired++;
   };
 
@@ -309,6 +326,7 @@
       if (d < p.aoe + ur) {
         const falloff = 1 - Math.max(0, d - ur) / p.aoe;
         let dmg = p.damage * falloff;
+        if (CLASSES[u.cls].turret && p.vsCap) dmg *= p.vsCap; // anti-capital ordnance
         const w = this._weakHit(u, p.x, p.y);
         if (w) {
           dmg *= this.T.weakCritMult;
@@ -382,11 +400,14 @@
         // Opposition AI: same class table, seeks nearest player ship to gun range.
         if (u.tier < 2) {
           let tgt = null, tgtD = Infinity;
+          const huntCapitals = !!cls.vsCapital;
           for (const v of this.units) {
             if (v.team === u.team || v.state !== ALIVE) continue;
-            const d = Math.hypot(v.x - u.x, v.y - u.y);
+            // Anti-capital ships treat capitals as much closer than they are.
+            const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && CLASSES[v.cls].turret ? 0.25 : 1);
             if (d < tgtD) { tgtD = d; tgt = v; }
           }
+          if (tgt) tgtD = Math.hypot(tgt.x - u.x, tgt.y - u.y);
           if (tgt && (u.tier === 0 || (this.tick & 1) === 0)) {
             const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
             let want;
@@ -420,6 +441,7 @@
 
       // --- Stall (player team only — opposition doesn't juggle) ---
       if (u.team === PLAYER && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
+        u.vx = 0; u.vy = 0;
         u.stallTimer += dt;
         if (u.stallTimer >= T.stallGraceSec) this._kill(u, 'stalled');
         continue;
@@ -431,8 +453,9 @@
         : cls.speed;
       if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
       speed *= cripple;
-      u.x += Math.cos(u.heading) * speed * dt;
-      u.y += Math.sin(u.heading) * speed * dt;
+      u.vx = Math.cos(u.heading) * speed; u.vy = Math.sin(u.heading) * speed;
+      u.x += u.vx * dt;
+      u.y += u.vy * dt;
 
       const distFromCenter = Math.hypot(u.x, u.y);
       if (distFromCenter > T.arenaRadius && u.dodgeTimer <= 0) {
@@ -459,12 +482,12 @@
 
       // Validate / acquire target. First to enter the cone wins and keeps priority.
       let target = u.targetId >= 0 ? this.units[u.targetId] : null;
-      if (target && (target.state !== ALIVE)) { target = null; u.targetId = -1; u.lockTime = 0; }
+      if (target && (target.state !== ALIVE)) { target = null; u.targetId = -1; u.lockQ = 0; }
       if (target) {
         if (this._canAcquire(u, target)) { u.outOfConeTime = 0; }
         else {
           u.outOfConeTime += dt;
-          if (u.outOfConeTime > T.coneGraceSec) { target = null; u.targetId = -1; u.lockTime = 0; u.outOfConeTime = 0; }
+          if (u.outOfConeTime > T.coneGraceSec) { target = null; u.targetId = -1; u.lockQ = 0; u.outOfConeTime = 0; }
         }
       }
       if (!target) {
@@ -474,31 +497,52 @@
           const et = u.enteredConeTick[v.id];
           if (et >= 0 && et < bestTick) { bestTick = et; best = v.id; }
         }
-        if (best >= 0) { u.targetId = best; u.lockTime = 0; u.outOfConeTime = 0; target = this.units[best]; }
+        if (best >= 0) {
+          target = this.units[best];
+          u.targetId = best; u.outOfConeTime = 0;
+          // Freeze entry quality: how far off the arc centre (or turret barrel) it came in.
+          const off = Math.abs(wrapAngle(Math.atan2(target.y - u.y, target.x - u.x) - u.gunAngle));
+          const worst = cls.turret ? T.turretEntryArc : cls.coneHalf;
+          u.entryQ = 1 - Math.min(1, off / worst);
+          u.lockCap = T.lockEntryFloor + (1 - T.lockEntryFloor) * u.entryQ;
+          u.lockQ = u.lockCap * T.lockStartFrac;
+          this.events.push({ type: 'locked', unit: u.id, target: best, entryQ: u.entryQ, tick: this.tick });
+        }
+      }
+
+      // Where to aim: straight at the target at zero lock, fully led at full lock.
+      let aimAngle = u.heading;
+      if (target) {
+        const dist = Math.hypot(target.x - u.x, target.y - u.y);
+        const lead = (dist / cls.projSpeed) * u.lockQ * T.leadMax;
+        aimAngle = Math.atan2(target.y + target.vy * lead - u.y, target.x + target.vx * lead - u.x);
       }
 
       // Turret (capitals only) rotates independently of the hull: toward target,
       // else settles on heading. Fixed guns always point where the hull points.
       if (cls.turret && this._weakFlag(u, 'bridge')) continue; // fire control gone: turret is dead weight
       if (cls.turret) {
-        const gunGoal = target ? Math.atan2(target.y - u.y, target.x - u.x) : u.heading;
+        const gunGoal = target ? aimAngle : u.heading;
         u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * dt);
       } else {
         u.gunAngle = u.heading;
       }
 
       if (target && this._inCone(u, target)) {
-        u.lockTime += dt;
-        // Cooldown only ticks with a valid target in the cone.
-        u.cooldown -= dt;
+        // Lock climbs toward the ceiling its entry earned — never past it.
+        u.lockQ = Math.min(u.lockCap, u.lockQ + u.lockCap * (1 - T.lockStartFrac) * dt / T.lockTimeFull);
+        // Cooldown only ticks with a valid target in the cone; a better lock reloads faster.
+        u.cooldown -= dt * (1 + T.fireRateBonus * u.lockQ);
         if (u.cooldown <= 0 && u.energy > cls.energyMax * T.autoFireFloor + cls.shotCost) {
-          const lockQ = Math.min(1, u.lockTime / T.lockTimeFull);
-          const spread = T.lockSpreadMax * (1 - lockQ);
-          const angle = u.gunAngle + (this.rng() * 2 - 1) * spread;
+          const spread = T.lockSpreadMax * (1 - u.lockQ);
+          // Fixed guns can only nudge the shot within their arc; turrets fire down the barrel.
+          let base = cls.turret ? u.gunAngle
+            : u.gunAngle + Math.max(-cls.coneHalf, Math.min(cls.coneHalf, wrapAngle(aimAngle - u.gunAngle)));
+          const angle = base + (this.rng() * 2 - 1) * spread;
           this._fireProjectile(u, angle);
           u.energy -= cls.shotCost; // shooting spends the pool that is also your health
           u.cooldown = cls.cooldown;
-          this.events.push({ type: 'fired', unit: u.id, target: u.targetId, spread: spread, tick: this.tick });
+          this.events.push({ type: 'fired', unit: u.id, target: u.targetId, spread: spread, lockQ: u.lockQ, tick: this.tick });
         }
       }
     }
@@ -545,7 +589,7 @@
     mix('t' + this.tick + 'h' + this.heldUnit);
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
-          ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId);
+          ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId + ',' + u.lockQ.toFixed(4));
       for (const w of u.weak) mix(w.type + w.hp.toFixed(2));
     }
     let live = 0;
