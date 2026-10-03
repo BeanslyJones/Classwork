@@ -98,3 +98,17 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   (2) a weighted chance at a bonus trait (e.g. faster recharge, collapsing
   battery, bigger crowd cap), and (3) its own neighbour bonus/penalty, so the
   same part can be strong or weak depending on where it's placed.
+
+## 11. Capital ships
+- A capital ship is **the player's own dropship**. There are no free-floating
+  generic capitals.
+- **Hired pilots orbit their leader's capital.** When ships are hired, they
+  fly around the capital of whoever hired them, and **the hirer controls that
+  capital**.
+- Capitals are the only ships with turrets (see 02).
+- Capitals have **weak points**: specific spots that take extra damage, rather
+  than one uniform hull.
+- There are **many types** of capital ship (different hulls, weak-point
+  layouts, turret setups).
+- 02's current `capital` class is a placeholder stand-in for this: one generic
+  hull, no weak points, AI-flown on the enemy side.
