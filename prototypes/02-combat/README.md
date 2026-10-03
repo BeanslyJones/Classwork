@@ -39,6 +39,11 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
   tighter spread (zero at full lock), target leading (`leadMax`), and faster
   reloads (`fireRateBonus`). Fixed guns can bend a shot within their arc toward
   the led point; turrets slew onto it.
+- **Nose assist** for unflown ships (fixed guns only): eases the nose toward the
+  nearest enemy within `assistArc` of the heading, at up to `assistTurn` rad/s
+  scaled by momentum — so it fades as a neglected ship slows. Without it,
+  unflown fixed-gun ships flew straight and the narrow-arc medium ships
+  (heavy, torpedo) almost never fired (~5 and ~2 shots per battle).
 - **Torpedo bomber**: slowest shots in the fleet (105 vs 180+), 3x damage to
   capitals (`vsCapital`), long-lived torpedoes (`projTtl`). Small ships can
   sidestep them; capitals can't. Enemy torpedo AI hunts capitals first.
@@ -62,8 +67,8 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
 ## Gate
 
 **Does neglect visibly cost?** Headless proxy (6v6 with capitals and torpedo
-bombers, 90s, seed 4242): neglected team wiped with 4 foes standing (225
-ship-seconds); bot-juggled team kept 4 alive and left 2 foes (430
+bombers, 90s, seed 4242): neglected team wiped with 3 foes standing (184
+ship-seconds); bot-juggled team kept 3 alive and cleared every foe (444
 ship-seconds). Costs, visibly.
 With fixed guns an unflown ship rarely lines up a shot, so neglect now costs
 firepower as well as ships.

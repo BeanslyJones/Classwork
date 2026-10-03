@@ -210,6 +210,27 @@ function duel(roster, extra) {
   assert(tb.heading > 0, 'enemy torpedo bomber turns toward the capital, not the nearer fighter');
 }
 
+// --- 5e. Nose assist: unflown fixed-gun ships ease onto enemies ahead. ------
+{
+  console.log('\n[nose assist]');
+  function run(momentum) {
+    const s = duel([{ cls: 'heavy', team: PLAYER }, { cls: 'fighter', team: ENEMY }]);
+    const [h, f] = s.units;
+    h.x = 0; h.y = 0; h.heading = 0; h.momentum = momentum;
+    let fired = 0;
+    for (let i = 0; i < 60; i++) {
+      f.x = h.x + 200; f.y = h.y + 60; f.heading = 0; // 17 deg off the nose, pacing it
+      s.step();
+      for (const e of s.events) if (e.type === 'fired' && e.unit === h.id) fired++;
+    }
+    return { heading: h.heading, fired: fired };
+  }
+  const full = run(1), none = run(0.0001);
+  assert(full.heading > 0.2, 'unflown heavy noses toward an enemy off its bow (' + full.heading.toFixed(2) + ' rad)');
+  assert(full.fired > 0, 'and gets shots off (' + full.fired + ')');
+  assert(none.heading < full.heading * 0.2, 'assist fades with momentum (neglect still costs)');
+}
+
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');

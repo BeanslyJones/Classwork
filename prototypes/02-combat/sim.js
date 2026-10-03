@@ -27,6 +27,8 @@
     unitRadius:      { value: 10,    min: 4,   max: 30,   tooltip: 'Unit collision radius (art scale decoupled).' },
     avoidRange:      { value: 90,    min: 0,   max: 300,  tooltip: 'Crystal evasion range for unheld ships.' },
     avoidSteer:      { value: 3.0,   min: 0,   max: 12,   tooltip: 'Max evasion turn (rad/s), scaled by momentum.' },
+    assistArc:       { value: 1.0,   min: 0,   max: 3.14, tooltip: 'Unflown ships nose toward enemies within this angle (radians) of their heading.' },
+    assistTurn:      { value: 0.8,   min: 0,   max: 6,    tooltip: 'Max nose-assist turn (rad/s) for unflown ships, scaled by momentum (fades as they slow).' },
     heldTurnRate:    { value: 6.0,   min: 1,   max: 20,   tooltip: 'Rad/s the held unit turns toward the aim angle.' },
     lockTimeFull:    { value: 1.6,   min: 0.2, max: 6,    tooltip: 'Seconds held in the arc to climb from the starting lock to its ceiling.' },
     lockSpreadMax:   { value: 0.35,  min: 0,   max: 1.5,  tooltip: 'Aim error (radians) at zero lock. Spread scales down with lock quality.' },
@@ -396,6 +398,20 @@
         // Unpossessed player ship: the juggle clock runs.
         u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
         u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
+        // Nose assist: fixed guns need the nose on target. An unflown ship eases
+        // toward the nearest enemy roughly ahead of it — weaker as momentum fades,
+        // so neglect still costs. Turrets don't need it.
+        if (!cls.turret && T.assistTurn > 0 && u.tier < 2) {
+          let best = null, bestD = Infinity;
+          for (const v of this.units) {
+            if (v.team === u.team || v.state !== ALIVE) continue;
+            const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy);
+            if (d > cls.coneRange * 1.3 || d >= bestD) continue;
+            if (Math.abs(wrapAngle(Math.atan2(dy, dx) - u.heading)) > T.assistArc) continue;
+            best = v; bestD = d;
+          }
+          if (best) u.heading = turnToward(u.heading, Math.atan2(best.y - u.y, best.x - u.x), T.assistTurn * u.momentum * dt);
+        }
       } else {
         // Opposition AI: same class table, seeks nearest player ship to gun range.
         if (u.tier < 2) {
