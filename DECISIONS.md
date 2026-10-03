@@ -86,3 +86,11 @@ minigame with a scatter circle. Flying off course doesn't just add a few units
 of error — you can land somewhere completely different: in another battle,
 or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 04's colour wheel and the scanner parts.
+
+## 10. Part attributes — WEIGHTED RANDOM, PER CELL
+- 06's current grid builder is usable as-is for now; no rebuild yet.
+- Every part's attributes are rolled with **weighted randomness**, not fixed.
+- A part's roll is made **per grid cell**: each cell of a multi-cell part has
+  its own weight, so bigger parts get more rolls.
+- Goal: no repeating the same build every run. "You gotta work with what you
+  got": loadouts are built from what you actually find, salvage and own.
