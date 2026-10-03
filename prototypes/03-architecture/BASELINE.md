@@ -9,11 +9,11 @@ against these numbers are the thing this gate exists to catch.
 
 | run        | mean ms | p50 ms | p99 ms | max ms | alive@end | shots |
 |------------|---------|--------|--------|--------|-----------|-------|
-| gating OFF | 0.879 | 0.863 | 1.526 | 4.095 | 100 | 9137 |
-| gating ON  | 0.856 | 0.824 | 1.585 | 6.817 | 100 | 9257 |
+| gating OFF | 0.987 | 0.933 | 2.384 | 6.396 | 100 | 12643 |
+| gating ON  | 0.854 | 0.830 | 2.183 | 5.690 | 100 | 12778 |
 
-Tier split at end (gating ON, Active/Reduced/Dormant): 90/6/4.
-Projectile pool: 9257 fired, 0 dropped, zero allocations after construction.
+Tier split at end (gating ON, Active/Reduced/Dormant): 0/3/97.
+Projectile pool: 12778 fired, 0 dropped, zero allocations after construction.
 
 Gate: **stable tick time @ 100 units** — p99 under half the 30 Hz budget, worst
 tick inside one frame, deterministic with gating engaged. See bench assertions.

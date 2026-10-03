@@ -114,6 +114,8 @@
       Ships hidden under the bubble show through as outlines.<br><br>
       Built for landscape: one thumb drags ships, the other hits DODGE and REFOCUS
       (bottom right). The bubble magnifies the middle of the selected ship's firing arc.<br><br>
+      The AI matches your APM (actions per minute: grabs, dodges, refocuses): each AI
+      action re-aims one of its ships, so it juggles at your pace. Both show top left.<br><br>
       Capitals have weak points (rings on the hull): bridge (nose) kills the turret,
       engines (tail) cripple speed, vents (sides) bleed energy. Hits there do extra damage.
     </div>
@@ -560,9 +562,16 @@ function render(dtReal) {
       netLine = '<div>LAN · you: ' + side + '</div><div>blue ' + blue + ' vs red ' + red + ' · ' + netLobby.players + ' online</div>';
     }
   }
+  // APM: yours, and what the AI is allowed (it matches you) when it flies the other side.
+  let apmLine = '';
+  if (myTeam >= 0) {
+    const myApm = NET ? (sim._netApm || [0, 0])[MINE()] : Math.round(sim.apm(MINE()));
+    const aiApm = NET ? (sim._netAiApm || [0, 0])[THEIRS()] : Math.round(sim.aiApm(THEIRS()));
+    apmLine = '<div>APM you ' + myApm + (sim.human[THEIRS()] ? '' : ' · AI ' + aiApm) + '</div>';
+  }
   hud.innerHTML =
     '<div class="big">' + mine + ' vs ' + foes + '</div>' +
-    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' + netLine +
+    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' + apmLine + netLine +
     (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — ' + again + '</div>' :
      foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — ' + again + '</div>' : '');
 }

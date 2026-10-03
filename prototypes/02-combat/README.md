@@ -76,11 +76,17 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
   set (faint dashed line) at its own rate; a dodge rolls along the current
   heading. Crystal look-ahead grows with turn radius, and a close call
   overrides the pilot/AI turn. Unflown ships keep at least `minSpeed` 50.
-- **AI reaction time** (`aiReactSec` 6s): each AI ship re-picks its heading
-  that often (staggered) and turns toward it in between — about one steering
-  decision per second across six ships, close to a juggling player's budget.
-  Without it, six always-steering AI ships beat one human pilot every time
-  once turns became slow.
+- **AI matches your APM** (`aiApmMatch` 1.0). Your actions per minute
+  (grabs, dodges, refocuses) are measured over the last 30s; the AI earns
+  actions at the same rate and spends each one re-aiming the ship it re-aimed
+  longest ago — in between its ships fly on toward their last heading, like
+  your released ships. Floor `aiApmMin` 10 so an idle player still faces a
+  moving AI; `aiApmDefault` 30 is assumed until there's history. Both APMs show
+  top left.
+- **Rapid fire, light bullets, slow shots.** Guns fire ~3x as often for about
+  a third of the damage per bullet (torpedo 1.5x / 0.6x), and bullets fly at
+  60% of their old speed with lifetimes long enough to reach full range.
+  Projectile pool raised to 1024.
 - **Time to kill** (one attacker, sustained fire, centre entry): ~2-4s on small
   ships, ~10s on a capital, ~5s for a torpedo bomber on a capital. Damage and
   energy pools are tuned to that; the `[time to kill]` test holds the ranges.
@@ -109,10 +115,11 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
 ## Gate
 
 **Does neglect visibly cost?** Headless proxy (6v6 with capitals and torpedo
-bombers, 10 battles x 90s): neglected team kills 1.5 enemies per battle (153
+bombers, 10 battles x 90s): neglected team kills 0.4 enemies per battle (228
 avg ship-seconds); a bot that flings its slowest ship at the nearest enemy
-every 1.5s kills 2.9 (334). With wide turns most battles are still going at
-90s, so the gate judges kills and survival, not wins.
+every 1.5s kills 1.6 (464). Slow bullets plus wide turns make moving fights
+long — most battles are still going at 90s — so the gate judges kills and
+survival, not wins.
 With fixed guns an unflown ship rarely lines up a shot, so neglect now costs
 firepower as well as ships.
 

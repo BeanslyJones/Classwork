@@ -131,3 +131,8 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Ships have a **turning radius**; bigger, slower ships turn wider.
 - **No snap turning.** Setting a direction makes the ship turn toward it at its
   own turn speed, including after you let go.
+
+## 15. AI pace and gunfire
+- **The AI matches the player's APM**: it gets the same number of actions per
+  minute, each one re-aiming one ship.
+- **More bullets, less damage each, slower bullets.**

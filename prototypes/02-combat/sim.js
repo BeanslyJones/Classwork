@@ -14,7 +14,9 @@
   const TUNABLES = {
     tickRate:        { value: 30,    min: 10,  max: 120,  tooltip: 'Fixed sim ticks per second.' },
     arenaRadius:     { value: 560,   min: 200, max: 2000, tooltip: 'Soft arena radius. No boundary death.' },
-    aiReactSec:      { value: 6,   min: 0,   max: 5,    tooltip: 'AI reaction time: each AI ship re-picks its heading this often and turns toward that in between — it juggles like a player instead of steering every ship every tick.' },
+    aiApmMatch:      { value: 1.0,   min: 0.25, max: 3,   tooltip: 'AI actions per minute as a multiple of its human opponent\'s APM (1 = match the player). Each AI action re-aims one ship, like one player grab.' },
+    aiApmDefault:    { value: 30,    min: 5,   max: 200,  tooltip: 'APM assumed for a player before there is history (blends out over the first ~10s), and for AI vs AI.' },
+    aiApmMin:        { value: 10,    min: 0,   max: 100,  tooltip: 'Floor on AI APM so an idle player still faces an opponent that moves.' },
     edgeSteer:       { value: 2.2,   min: 0,   max: 10,   tooltip: 'Corrective turn (rad/s) past the soft edge.' },
     minSpeed:        { value: 50,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
     momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
@@ -66,21 +68,21 @@
   // size: collision radius multiplier on unitRadius.
   const CLASSES = {
     fighter:     { speed: 150, turnRadius: 110, energyMax: 100, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.65, coneRange: 230, cooldown: 0.50, shotCost: 2.0, damage: 16,  aoe: 26, projSpeed: 330 },
+                   coneHalf: 0.65, coneRange: 230, cooldown: 0.167, shotCost: 0.67, damage: 7.2,  aoe: 26, projSpeed: 198, projTtl: 1.51 },
     bomber:      { speed: 100, turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.80, coneRange: 270, cooldown: 1.60, shotCost: 6.0, damage: 57.5, aoe: 72, projSpeed: 180 },
+                   coneHalf: 0.80, coneRange: 270, cooldown: 0.533, shotCost: 2.0, damage: 26.3, aoe: 72, projSpeed: 108, projTtl: 3.25 },
     heavy:       { speed: 112, turnRadius: 160, energyMax: 125, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.45, coneRange: 320, cooldown: 0.80, shotCost: 4.0, damage: 41.5, aoe: 18, projSpeed: 430 },
+                   coneHalf: 0.45, coneRange: 320, cooldown: 0.267, shotCost: 1.33, damage: 14, aoe: 18, projSpeed: 258, projTtl: 1.61 },
     interceptor: { speed: 215, turnRadius: 90, energyMax: 58,  turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.70, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 10.5,  aoe: 16, projSpeed: 370 },
+                   coneHalf: 0.70, coneRange: 180, cooldown: 0.117, shotCost: 0.5, damage: 5.1,  aoe: 16, projSpeed: 222, projTtl: 1.05 },
     aaa:         { speed: 70,  turnRadius: 120, energyMax: 105, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 1.40, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 9.2,  aoe: 36, projSpeed: 260 },
+                   coneHalf: 1.40, coneRange: 210, cooldown: 0.1, shotCost: 0.4, damage: 4.25,  aoe: 36, projSpeed: 156, projTtl: 1.75 },
     // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
     // sidestep but a lumbering capital can't. vsCapital multiplies damage on
     // capitals; projTtl lets the slow torpedo actually reach its range.
     torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
-                   coneHalf: 0.55, coneRange: 300, cooldown: 2.40, shotCost: 7.0, damage: 66, aoe: 28, projSpeed: 105,
-                   vsCapital: 2.9, projTtl: 3.4 },
+                   coneHalf: 0.55, coneRange: 300, cooldown: 1.6, shotCost: 4.67, damage: 38.8, aoe: 28, projSpeed: 105, projTtl: 3.71,
+                   vsCapital: 4.0 },
     // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
     // weakPoints: spots on the hull in hull-local units of the ship's radius
     // (+x = nose). A blast landing on one does weakCritMult damage and wears
@@ -88,8 +90,8 @@
     //   bridge -> turret fire control offline   engine -> speed/turn crippled
     //   vent   -> hull bleeds energy (ventLeak)
     // Different capital types are just different rows with different layouts.
-    capital:     { speed: 45,  turnRadius: 200, energyMax: 625, turret: true,  gunTurn: 1.8, size: 2.2,
-                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 44, aoe: 30, projSpeed: 300,
+    capital:     { speed: 45,  turnRadius: 200, energyMax: 678, turret: true,  gunTurn: 1.8, size: 2.2,
+                   coneHalf: 0.22, coneRange: 340, cooldown: 0.3, shotCost: 1.33, damage: 16.6, aoe: 30, projSpeed: 180, projTtl: 2.46,
                    weakPoints: [
                      { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
                      { type: 'engine', x: -1.0,  y: 0,     r: 0.45 },
@@ -148,6 +150,11 @@
     this.held = [-1, -1];
     this.aim = [0, 0];
     this.human = [true, false];
+    // APM matching: ticks of each side's actions (grab / dodge / refocus) over
+    // the last 30s; the AI spends a matching budget, one ship re-aim per action.
+    this.actions = [[], []];
+    this.aiBudget = [0, 0];
+    this.aiPick = [-1, -1];
     this.pending = [];
     this.events = [];
 
@@ -190,6 +197,7 @@
         gunAngle: baseAng + Math.PI,
         momentum: 1, stallTimer: 0, crystallizeTimer: 0,
         goal: null, // heading a released ship is still turning toward (no snap turns)
+        decTick: -1 - i, // AI: tick of this ship's last re-aim (oldest goes next)
         energy: cls.energyMax,
         targetId: -1, outOfConeTime: 0, cooldown: cls.cooldown,
         // Arc-entry lock: entryQ = how centred the target was when it entered
@@ -207,7 +215,7 @@
     }
 
     // Projectile pool. Fixed-capacity free list; nothing allocates per shot.
-    const CAP = 256;
+    const CAP = 1024; // ~3x the bullets in flight since guns went rapid-fire
     this.projectiles = new Array(CAP);
     for (let i = 0; i < CAP; i++) {
       this.projectiles[i] = { active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1 };
@@ -249,6 +257,7 @@
         u.held = true;
         this.aim[team] = u.heading;
         this.events.push({ type: 'grabbed', unit: cmd.unit, team: team, tick: this.tick });
+        this.actions[team].push(this.tick);
       } else if (cmd.type === 'aim') {
         if (typeof cmd.angle === 'number' && isFinite(cmd.angle)) this.aim[team] = cmd.angle;
       } else if (cmd.type === 'release') {
@@ -268,6 +277,7 @@
         u.dodgeTimer = this.T.dodgeDurSec;
         u.goal = null; // rolls straight along its current heading — no snap
         this.events.push({ type: 'dodge', unit: u.id, tick: this.tick });
+        this.actions[team].push(this.tick);
       } else if (cmd.type === 'refocus') {
         // Drop the current lock so the first NEW cone entrant takes priority.
         const u = this.held[team] >= 0 ? this.units[this.held[team]] : null;
@@ -275,9 +285,26 @@
         u.targetId = -1; u.lockQ = 0; u.lockCap = 0; u.entryQ = 0; u.outOfConeTime = 0;
         u.enteredConeTick.fill(-1);
         this.events.push({ type: 'refocus', unit: u.id, tick: this.tick });
+        this.actions[team].push(this.tick);
       }
     }
     this.pending.length = 0;
+  };
+
+  const APM_WINDOW_SEC = 30, APM_PRIOR_SEC = 10;
+  // A side's actions per minute over the last 30s, blended with aiApmDefault
+  // while there's little history so the AI doesn't start frozen or frantic.
+  Sim.prototype.apm = function (team) {
+    const T = this.T, win = APM_WINDOW_SEC * T.tickRate, list = this.actions[team];
+    while (list.length && list[0] <= this.tick - win) list.shift();
+    const elapsed = Math.min(this.tick, win) / T.tickRate;
+    return (list.length + T.aiApmDefault * APM_PRIOR_SEC / 60) / ((elapsed + APM_PRIOR_SEC) / 60);
+  };
+  // The APM an AI side is allowed: its human opponent's, times aiApmMatch.
+  Sim.prototype.aiApm = function (team) {
+    const T = this.T, opp = 1 - team;
+    const base = this.human[opp] ? this.apm(opp) : T.aiApmDefault;
+    return Math.max(T.aiApmMin, base * T.aiApmMatch);
   };
 
   Sim.prototype._kill = function (u, cause) {
@@ -379,6 +406,21 @@
     this.events.length = 0;
     this._applyCommands();
 
+    // --- AI action budget: each AI side earns re-aims at its matched APM and
+    // spends one per action on the ship it re-aimed longest ago. ---
+    for (let t = 0; t < 2; t++) {
+      this.aiPick[t] = -1;
+      if (this.human[t]) { this.aiBudget[t] = 0; continue; }
+      this.aiBudget[t] = Math.min(2, this.aiBudget[t] + this.aiApm(t) / 60 * dt);
+      if (this.aiBudget[t] < 1) continue;
+      let pick = null;
+      for (const u of this.units) {
+        if (u.team !== t || u.state !== ALIVE) continue;
+        if (!pick || u.decTick < pick.decTick) pick = u;
+      }
+      if (pick) { this.aiPick[t] = pick.id; pick.decTick = this.tick; this.aiBudget[t] -= 1; }
+    }
+
     // --- Update gating: tier by distance to nearest living foe. Deterministic. ---
     for (const u of this.units) {
       if (u.state !== ALIVE) continue;
@@ -438,10 +480,10 @@
         u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
       } else {
         // Opposition AI: same class table, seeks nearest player ship to gun range.
-        // It decides a heading only every aiReactSec (staggered per ship) and
-        // turns toward that stale goal in between.
-        const reactTicks = Math.max(1, Math.round(T.aiReactSec * T.tickRate));
-        const decide = (this.tick + u.id * 7) % reactTicks === 0 || u.goal === null;
+        // It only re-aims a ship when it spends an action on it (APM-matched,
+        // see the budget above); in between the ship turns toward its last goal
+        // and flies on, just like a released player ship.
+        const decide = this.aiPick[u.team] === u.id;
         if (u.goal !== null) u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
         if (u.tier < 2 && decide) {
           let tgt = null, tgtD = Infinity;
@@ -664,6 +706,8 @@
       units: units, proj: proj,
       hazards: this.hazards.map(h => [r2(h.x), r2(h.y), r2(h.r), h.salvage ? 1 : 0]),
       events: events || [],
+      apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
+      aiApm: [Math.round(this.aiApm(0)), Math.round(this.aiApm(1))],
     };
   };
   Sim.prototype.applySnapshot = function (snap) {
@@ -684,12 +728,13 @@
     }
     this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));
     this.events = snap.events;
+    this._netApm = snap.apm; this._netAiApm = snap.aiApm;
   };
 
   Sim.prototype.stateHash = function () {
     let h = 0x811c9dc5;
     const mix = str => { for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } };
-    mix('t' + this.tick + 'h' + this.held.join(',') + 'm' + this.human.join(','));
+    mix('t' + this.tick + 'h' + this.held.join(',') + 'm' + this.human.join(',') + 'b' + this.aiBudget.map(b => b.toFixed(4)).join(','));
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
           ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId + ',' + u.lockQ.toFixed(4));

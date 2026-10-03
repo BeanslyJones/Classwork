@@ -275,6 +275,30 @@ function duel(roster, extra) {
 }
 function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
+// --- 5h. AI matches the player's APM. ----------------------------------------
+{
+  console.log('\n[AI matches player APM]');
+  function aiActions(grabEveryTicks) {
+    const s = new Sim(SEED, { hazardCount: 0 });
+    let aiReaims = 0;
+    const mine = s.units.filter(u => u.team === PLAYER);
+    for (let t = 0; t < TICK_RATE * 60; t++) {
+      if (grabEveryTicks && t % grabEveryTicks === 0) {
+        const u = mine[(t / grabEveryTicks) % mine.length];
+        if (u.state === 'alive') { s.command({ type: 'grab', unit: u.id }); s.command({ type: 'release' }); }
+      }
+      s.step();
+      if (s.aiPick[ENEMY] >= 0) aiReaims++;
+    }
+    return { ai: aiReaims, player: s.apm(PLAYER) };
+  }
+  const slow = aiActions(TICK_RATE * 3), fast = aiActions(TICK_RATE / 2); // 20 vs 120 APM
+  assert(fast.ai > slow.ai * 3, 'a faster player faces a faster AI (' + slow.ai + ' -> ' + fast.ai + ' re-aims/min)');
+  assert(Math.abs(fast.ai - fast.player) < fast.player * 0.25, 'AI APM tracks the player (AI ' + fast.ai + ' vs player ' + fast.player.toFixed(0) + ')');
+  const idle = aiActions(0);
+  assert(idle.ai >= 10 && idle.ai < 30, 'idle player still faces a moving AI (' + idle.ai + ' re-aims/min, floor aiApmMin)');
+}
+
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');
