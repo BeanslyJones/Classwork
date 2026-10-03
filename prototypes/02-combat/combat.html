@@ -30,7 +30,7 @@
   #camZoom input { width: 100%; }
   #camBar button { margin: 0; padding: 7px 11px; font-weight: 600; }
   #camBar button.on { background: #3a4a6a; border-color: #6c86b8; color: #fff; }
-  @media (max-width: 700px) { #camBar { top: 56px; right: 10px; } }
+  @media (max-width: 700px) { #camBar { top: 56px; right: 10px; } body.net #camBar { top: 96px; } }
   .sect { margin: 14px 0 4px; color: #8fa3c8; }
   @media (max-width: 700px) {
     #panelToggle { display: block; }
@@ -99,11 +99,26 @@
 <script src="sim.js"></script>
 <script>
 'use strict';
-const { Sim, TUNABLES, CLASSES, PLAYER, ENEMY, mulberry32 } = CombatSim;
+const { Sim, TUNABLES, CLASSES, mulberry32 } = CombatSim;
 
 let seed = 4242;
 let overrides = {};
 let sim = new Sim(seed, overrides);
+
+// ---- LAN multiplayer: opened from server.js (…/combat.html?net=1) the page
+// stops simulating, sends its commands to the server and draws the snapshots
+// it streams back. Opened directly, it's the single-player prototype. ----
+const NET = new URLSearchParams(location.search).has('net');
+if (NET) document.body.classList.add('net');
+let myTeam = 0;         // the side this screen flies (net: assigned by the server; -1 = spectating)
+let netId = null, netLobby = null;
+const MINE = () => (myTeam < 0 ? 0 : myTeam);
+const THEIRS = () => 1 - MINE();
+function act(cmd) {
+  if (!NET) { sim.command(cmd); return; }
+  if (!netId) return;
+  fetch('/cmd?id=' + netId, { method: 'POST', body: JSON.stringify(cmd), keepalive: true }).catch(() => {});
+}
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
@@ -124,11 +139,13 @@ for (const key in TUNABLES) {
     const v = parseFloat(e.target.value);
     overrides[key] = v;
     document.getElementById('v_' + key).textContent = v;
+    if (NET) { act({ type: 'tune', key: key, value: v }); return; }
     if (!STRUCTURAL.has(key)) sim.T[key] = v;
   });
 }
 
 function restart(newSeed) {
+  if (NET) { act({ type: 'restart', newSeed: !!newSeed }); return; }
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   sim = new Sim(seed, overrides);
   selected = -1;
@@ -138,7 +155,7 @@ function restart(newSeed) {
 document.getElementById('btnRestart').addEventListener('click', () => restart(false));
 document.getElementById('btnSeed').addEventListener('click', () => restart(true));
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
-document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); sim.command({ type: 'dodge' }); });
+document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'dodge' }); });
 
 // ---- Game speed: scales real time fed to the fixed-tick sim. The sim itself is
 // untouched (same ticks, same results), it just advances slower or faster. ----
@@ -146,12 +163,16 @@ let gameSpeed = 0.5, paused = false;
 try { const v = parseFloat(localStorage.getItem('rw02.speed')); if (v >= 0.1 && v <= 2) gameSpeed = v; } catch (e) {}
 const speedIn = document.getElementById('speed'), speedVal = document.getElementById('speedVal');
 const pauseBtn = document.getElementById('pauseBtn');
-function setSpeed(v) {
+function setSpeed(v, fromServer) {
+  if (NET && !fromServer) act({ type: 'speed', value: v });
   gameSpeed = v; speedIn.value = v;
   speedVal.textContent = paused ? 'paused' : (Math.round(v * 100) / 100) + '×';
   try { localStorage.setItem('rw02.speed', String(v)); } catch (e) {}
 }
-function setPaused(p) { paused = p; pauseBtn.textContent = p ? '▶' : '❚❚'; setSpeed(gameSpeed); }
+function setPaused(p, fromServer) {
+  if (NET && !fromServer) act({ type: 'pause', value: p });
+  paused = p; pauseBtn.textContent = p ? '▶' : '❚❚'; setSpeed(gameSpeed, true);
+}
 speedIn.addEventListener('input', e => setSpeed(parseFloat(e.target.value)));
 document.querySelectorAll('#speedBox button[data-s]').forEach(b =>
   b.addEventListener('click', () => { setPaused(false); setSpeed(parseFloat(b.dataset.s)); }));
@@ -224,7 +245,7 @@ setCamMode(camMode);
 // Snap and Bubble follow it; with nothing selected they fall back to Fit.
 let selected = -1;
 function focusUnit() {
-  if (sim.heldUnit >= 0) selected = sim.heldUnit;
+  if (sim.held[MINE()] >= 0) selected = sim.held[MINE()];
   const f = selected >= 0 ? sim.units[selected] : null;
   if (f && f.state === 'alive') return f;
   selected = -1;
@@ -241,7 +262,7 @@ function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.client
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   if (pointer.down) return;
-  if (sim.aliveCount(PLAYER) === 0 || sim.aliveCount(ENEMY) === 0) { restart(false); return; }
+  if (!NET && (sim.aliveCount(MINE()) === 0 || sim.aliveCount(THEIRS()) === 0)) { restart(false); return; }
   const p = localXY(e);
   pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
   cv.setPointerCapture(e.pointerId);
@@ -250,11 +271,11 @@ cv.addEventListener('pointerdown', e => {
   const PICK_PX = 70;
   let bestU = null, bestD = Infinity;
   for (const u of sim.units) {
-    if (u.team !== PLAYER || u.state !== 'alive') continue;
+    if (u.team !== MINE() || u.state !== 'alive') continue;
     const d = Math.hypot(u.x - w.x, u.y - w.y) * cam.scale;
     if (d < bestD) { bestD = d; bestU = u; }
   }
-  if (bestU && bestD <= PICK_PX) { sim.command({ type: 'grab', unit: bestU.id }); selected = bestU.id; }
+  if (bestU && bestD <= PICK_PX && myTeam >= 0) { act({ type: 'grab', unit: bestU.id }); selected = bestU.id; }
   else { selected = -1; pointer.down = false; pointer.id = -1; }
 });
 cv.addEventListener('pointermove', e => {
@@ -265,7 +286,8 @@ cv.addEventListener('pointermove', e => {
 function endPointer(e) {
   if (!pointer.down || e.pointerId !== pointer.id) return;
   pointer.down = false; pointer.id = -1;
-  sim.command({ type: 'release' });
+  flushAim(true);
+  act({ type: 'release' });
 }
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
@@ -273,20 +295,22 @@ cv.addEventListener('pointercancel', endPointer);
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
   if (e.key >= '1' && e.key <= '9') {
-    const id = parseInt(e.key, 10) - 1, u = sim.units[id];
-    sim.command({ type: 'grab', unit: id }); pointer.down = true;
-    if (u && u.team === PLAYER && u.state === 'alive') selected = id;
+    const id = parseInt(e.key, 10) - 1;
+    // Keys 1-6 pick your Nth ship (whichever side you fly).
+    const mine = sim.units.filter(v => v.team === MINE());
+    const pick = mine[id];
+    if (pick && myTeam >= 0) { act({ type: 'grab', unit: pick.id }); pointer.down = true; if (pick.state === 'alive') selected = pick.id; }
   }
   if (e.key === 'Escape') selected = -1;
-  if (e.key === ' ') { e.preventDefault(); sim.command({ type: 'dodge' }); }
-  if (e.key === 'f' || e.key === 'F') sim.command({ type: 'refocus' });
+  if (e.key === ' ') { e.preventDefault(); act({ type: 'dodge' }); }
+  if (e.key === 'f' || e.key === 'F') act({ type: 'refocus' });
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
 });
 window.addEventListener('keyup', e => {
-  if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; sim.command({ type: 'release' }); }
+  if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; flushAim(true); act({ type: 'release' }); }
 });
 
 // ---- Fixed-tick sim, decoupled render. ----
@@ -294,27 +318,81 @@ let acc = 0, last = performance.now();
 let survivalTime = 0;
 const flashes = []; // detonation ring effects (render-only, never touches sim state)
 
+function pushFlashes(events) {
+  for (const e of events) {
+    if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
+    if (e.type === 'weakDown') flashes.push({ x: e.x, y: e.y, r: 70, age: 0, big: true });
+  }
+}
+// Aim while dragging: every tick offline; ~20x/s over the network.
+let lastAimSent = 0;
+function currentAim() {
+  const h = sim.held[MINE()];
+  if (!pointer.down || h < 0) return null;
+  const u = sim.units[h], w = toWorld(pointer.x, pointer.y);
+  return Math.atan2(w.y - u.y, w.x - u.x);
+}
+function flushAim(force) {
+  const a = currentAim();
+  if (a === null) return;
+  const now = performance.now();
+  if (!force && now - lastAimSent < 50) return;
+  lastAimSent = now;
+  act({ type: 'aim', angle: a });
+}
+
 function frame(now) {
   const dtReal = Math.min(0.1, (now - last) / 1000);
   last = now;
-  acc += paused ? 0 : dtReal * gameSpeed;
-  const stepLen = 1 / sim.T.tickRate;
-  while (acc >= stepLen) {
-    if (pointer.down && sim.heldUnit >= 0) {
-      const u = sim.units[sim.heldUnit];
-      const w = toWorld(pointer.x, pointer.y);
-      sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
+  if (NET) {
+    flushAim(false);
+  } else {
+    acc += paused ? 0 : dtReal * gameSpeed;
+    const stepLen = 1 / sim.T.tickRate;
+    while (acc >= stepLen) {
+      const a = currentAim();
+      if (a !== null) sim.command({ type: 'aim', angle: a });
+      sim.step();
+      pushFlashes(sim.events);
+      if (sim.aliveCount(MINE()) > 0 && sim.aliveCount(THEIRS()) > 0) survivalTime += stepLen;
+      acc -= stepLen;
     }
-    sim.step();
-    for (const e of sim.events) {
-      if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
-      if (e.type === 'weakDown') flashes.push({ x: e.x, y: e.y, r: 70, age: 0, big: true });
-    }
-    if (sim.aliveCount(PLAYER) > 0 && sim.aliveCount(ENEMY) > 0) survivalTime += stepLen;
-    acc -= stepLen;
   }
   render(dtReal);
   requestAnimationFrame(frame);
+}
+
+// ---- Network client ----
+if (NET) {
+  const es = new EventSource('/events');
+  es.addEventListener('hello', ev => {
+    const h = JSON.parse(ev.data);
+    netId = h.id; myTeam = h.seat;
+    if (h.seed !== seed || !sim._net) {
+      seed = h.seed; overrides = h.overrides || {};
+      sim = new Sim(seed, overrides); sim._net = true;
+      selected = -1; flashes.length = 0;
+    }
+    applyLobby(h);
+  });
+  es.addEventListener('lobby', ev => applyLobby(JSON.parse(ev.data)));
+  es.addEventListener('snap', ev => {
+    const snap = JSON.parse(ev.data);
+    sim.applySnapshot(snap);
+    pushFlashes(snap.events);
+    survivalTime = snap.tick / sim.T.tickRate;
+  });
+  es.onerror = () => { netLobby = null; };
+}
+function applyLobby(l) {
+  netLobby = l;
+  if (l.overrides) for (const k in l.overrides) {
+    sim.T[k] = l.overrides[k];
+    const inp = document.getElementById('s_' + k), lab = document.getElementById('v_' + k);
+    if (inp) inp.value = l.overrides[k];
+    if (lab) lab.textContent = l.overrides[k];
+  }
+  if (typeof l.speed === 'number') { paused = !!l.paused; pauseBtn.textContent = paused ? '▶' : '❚❚'; setSpeed(l.speed, true); }
 }
 
 const TEAMCOL = ['#9fd0ff', '#ff9f8a'];
@@ -356,7 +434,7 @@ function render(dtReal) {
   } else {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
     for (const u of sim.units) {
-      if (u.team !== PLAYER || u.state === 'crystallized') continue;
+      if (u.team !== MINE() || u.state === 'crystallized') continue;
       x0 = Math.min(x0, u.x); y0 = Math.min(y0, u.y); x1 = Math.max(x1, u.x); y1 = Math.max(y1, u.y); n++;
     }
     if (n) {
@@ -412,9 +490,9 @@ function render(dtReal) {
       ctx.save();
       ctx.translate(wx, wy); ctx.rotate(u.heading);
       hullPath(u.cls, gr);
-      ctx.fillStyle = u.team === PLAYER ? 'rgba(159,208,255,0.25)' : 'rgba(255,120,100,0.3)';
+      ctx.fillStyle = u.team === 0 ? 'rgba(159,208,255,0.25)' : 'rgba(255,120,100,0.3)';
       ctx.fill();
-      ctx.strokeStyle = u.team === PLAYER ? '#9fd0ff' : '#ff6a55';
+      ctx.strokeStyle = u.team === 0 ? '#9fd0ff' : '#ff6a55';
       ctx.lineWidth = 1.6; ctx.stroke();
       ctx.restore();
     }
@@ -423,12 +501,22 @@ function render(dtReal) {
     ctx.strokeStyle = 'rgba(160,190,240,0.7)'; ctx.lineWidth = 2; ctx.stroke();
   }
 
-  const mine = sim.aliveCount(PLAYER), foes = sim.aliveCount(ENEMY);
+  const mine = sim.aliveCount(MINE()), foes = sim.aliveCount(THEIRS());
+  const again = NET ? 'Restart in ⚙ panel' : 'tap to restart';
+  let netLine = '';
+  if (NET) {
+    if (!netLobby) netLine = '<div style="color:#e8c34a">connecting to server…</div>';
+    else {
+      const side = myTeam === 0 ? '<span style="color:#9fd0ff">BLUE</span>' : myTeam === 1 ? '<span style="color:#ff9f8a">RED</span>' : 'spectating';
+      const red = netLobby.seats[1] ? 'human' : 'AI', blue = netLobby.seats[0] ? 'human' : 'AI';
+      netLine = '<div>LAN · you: ' + side + '</div><div>blue ' + blue + ' vs red ' + red + ' · ' + netLobby.players + ' online</div>';
+    }
+  }
   hud.innerHTML =
     '<div class="big">' + mine + ' vs ' + foes + '</div>' +
-    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' +
-    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — tap to restart</div>' :
-     foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — tap to restart</div>' : '');
+    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' + netLine +
+    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — ' + again + '</div>' :
+     foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — ' + again + '</div>' : '');
 }
 
 // Draws the whole world with the current `cam` transform.
@@ -472,7 +560,7 @@ function drawWorld() {
       ctx.moveTo(0, 0);
       ctx.arc(0, 0, cls.coneRange, u.gunAngle - cls.coneHalf, u.gunAngle + cls.coneHalf);
       ctx.closePath();
-      ctx.fillStyle = u.team === PLAYER ? 'rgba(120,170,255,0.045)' : 'rgba(255,130,110,0.045)';
+      ctx.fillStyle = u.team === 0 ? 'rgba(120,170,255,0.045)' : 'rgba(255,130,110,0.045)';
       ctx.fill();
     }
 
@@ -484,7 +572,7 @@ function drawWorld() {
       ctx.strokeStyle = frac > 0.5 ? '#5fd08a' : (frac > 0.2 ? '#e8c34a' : '#e85a4a');
       ctx.lineWidth = 3 / cam.scale;
       ctx.stroke();
-      if (u.team === PLAYER && u.momentum <= 0.25) { // juggle warning
+      if (sim.human[u.team] && u.momentum <= 0.25) { // juggle warning
         ctx.beginPath(); ctx.arc(0, 0, r + 12, 0, 7);
         ctx.strokeStyle = 'rgba(232,90,74,' + (0.4 + 0.6 * Math.abs(Math.sin(sim.tick * 0.3))) + ')';
         ctx.lineWidth = 2 / cam.scale;
@@ -543,16 +631,17 @@ function drawWorld() {
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5 / cam.scale; ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (u.team === PLAYER) {
+    if (u.team === MINE()) {
+      const num = sim.units.filter(v => v.team === u.team).indexOf(u) + 1; // matches keys 1-6
       ctx.fillStyle = '#5b6880';
       ctx.font = (12 / cam.scale) + 'px system-ui';
-      ctx.fillText(String(u.id + 1), u.x + r + 4, u.y - r - 4);
+      ctx.fillText(String(num), u.x + r + 4, u.y - r - 4);
     }
   }
 
   // Lock lines (your ships): colour = entry quality, strength = current lock.
   for (const u of sim.units) {
-    if (u.team !== PLAYER || u.state !== 'alive' || u.targetId < 0) continue;
+    if (u.team !== MINE() || u.state !== 'alive' || u.targetId < 0) continue;
     const t = sim.units[u.targetId];
     if (!t || t.state !== 'alive') continue;
     const hue = Math.round(120 * u.entryQ); // 0 red .. 120 green
@@ -596,11 +685,11 @@ function drawWorld() {
   }
 
   // Aim line
-  if (sim.heldUnit >= 0) {
-    const u = sim.units[sim.heldUnit];
+  if (sim.held[MINE()] >= 0) {
+    const u = sim.units[sim.held[MINE()]];
     ctx.beginPath();
     ctx.moveTo(u.x, u.y);
-    ctx.lineTo(u.x + Math.cos(sim.aimAngle) * 140, u.y + Math.sin(sim.aimAngle) * 140);
+    ctx.lineTo(u.x + Math.cos(sim.aim[MINE()]) * 140, u.y + Math.sin(sim.aim[MINE()]) * 140);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.setLineDash([6, 6]);
     ctx.lineWidth = 2 / cam.scale;

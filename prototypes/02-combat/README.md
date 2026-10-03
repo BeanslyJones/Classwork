@@ -22,6 +22,26 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
 - Every class has its own hull silhouette (render-only `HULLS` table in the page).
 - **Verify:** `node test.js`.
 
+## LAN multiplayer
+
+1. On any computer on your Wi-Fi (Node.js installed, nothing else needed):
+   `node server.js` from this folder (or `PORT=9000 node server.js`).
+2. It prints addresses like `http://192.168.1.20:8080/`. Open that on each
+   phone/computer on the same Wi-Fi.
+3. First to join flies **blue**, second flies **red**, anyone else spectates
+   (and takes over a seat if a player leaves). An empty seat is flown by the AI,
+   so one person can still play solo against it.
+
+How it works: the server runs the one true battle and streams snapshots to
+every screen ~30x/s (Server-Sent Events); screens only send their controls
+(grab / aim / release / dodge / refocus) back. No screen simulates on its own,
+so phones and computers can't drift out of sync. Game speed, pause, restart and
+tunable sliders are shared — any player's change applies to everyone.
+`node server.test.js` checks seating, control, spectators and hand-back to the AI.
+
+Not yet: the claude.ai link is single-player only (a hosted page can't reach
+your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slower.
+
 ## Combat rules implemented (all headless-verified)
 
 - Firing cones per class with a real wide-vs-narrow trade (AAA 1.1 rad half-angle

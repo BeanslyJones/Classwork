@@ -138,8 +138,12 @@
     this.rng = mulberry32(this.seed);
     this.tick = 0;
     this.dt = 1 / this.T.tickRate;
-    this.heldUnit = -1;
-    this.aimAngle = 0;
+    // Per-team control. human[team]: that side is flown by a person (juggle
+    // rules: momentum drain, stall) rather than the opposition AI. Single
+    // player = blue human, red AI; LAN multiplayer flips red to human.
+    this.held = [-1, -1];
+    this.aim = [0, 0];
+    this.human = [true, false];
     this.pending = [];
     this.events = [];
 
@@ -206,42 +210,62 @@
     this.poolStats = { fired: 0, dropped: 0 };
   }
 
+  // Back-compat for single-player callers: heldUnit / aimAngle = blue's.
+  Object.defineProperty(Sim.prototype, 'heldUnit', {
+    get: function () { return this.held[0]; }, set: function (v) { this.held[0] = v; } });
+  Object.defineProperty(Sim.prototype, 'aimAngle', {
+    get: function () { return this.aim[0]; }, set: function (v) { this.aim[0] = v; } });
+
+  // Hand a side to a person (true) or back to the AI (false).
+  Sim.prototype.setHuman = function (team, on) {
+    if (this.human[team] === !!on) return;
+    this.human[team] = !!on;
+    if (this.held[team] >= 0) { this.units[this.held[team]].held = false; this.held[team] = -1; }
+    for (const u of this.units) if (u.team === team && u.state === ALIVE) { u.momentum = 1; u.stallTimer = 0; }
+    this.events.push({ type: 'control', team: team, human: !!on, tick: this.tick });
+  };
+
+  // Commands carry an optional team (default 0 = blue). A side can only touch
+  // its own ships, and only while a person is flying it.
   Sim.prototype.command = function (cmd) { this.pending.push(cmd); };
 
   Sim.prototype._applyCommands = function () {
     for (const cmd of this.pending) {
+      const team = cmd.team | 0;
+      if (team !== 0 && team !== 1) continue;
+      if (!this.human[team]) continue;
       if (cmd.type === 'grab') {
         const u = this.units[cmd.unit];
-        // One grabbable unit at a time, own team only — targeting stays enemy-only,
-        // possession stays friendly-only.
-        if (!u || u.team !== PLAYER || u.state !== ALIVE) continue;
-        if (this.heldUnit >= 0) this.units[this.heldUnit].held = false;
-        this.heldUnit = cmd.unit;
+        // One grabbable unit at a time per side, own ships only — targeting stays
+        // enemy-only, possession stays friendly-only.
+        if (!u || u.team !== team || u.state !== ALIVE) continue;
+        if (this.held[team] >= 0) this.units[this.held[team]].held = false;
+        this.held[team] = cmd.unit;
         u.held = true;
-        this.aimAngle = u.heading;
-        this.events.push({ type: 'grabbed', unit: cmd.unit, tick: this.tick });
+        this.aim[team] = u.heading;
+        this.events.push({ type: 'grabbed', unit: cmd.unit, team: team, tick: this.tick });
       } else if (cmd.type === 'aim') {
-        this.aimAngle = cmd.angle;
+        if (typeof cmd.angle === 'number' && isFinite(cmd.angle)) this.aim[team] = cmd.angle;
       } else if (cmd.type === 'release') {
-        if (this.heldUnit < 0) continue;
-        const u = this.units[this.heldUnit];
+        if (this.held[team] < 0) continue;
+        const u = this.units[this.held[team]];
         u.held = false;
-        u.heading = this.aimAngle;
+        u.heading = this.aim[team];
         u.momentum = 1;
         u.stallTimer = 0;
-        this.events.push({ type: 'released', unit: this.heldUnit, tick: this.tick });
-        this.heldUnit = -1;
+        this.events.push({ type: 'released', unit: this.held[team], team: team, tick: this.tick });
+        this.held[team] = -1;
       } else if (cmd.type === 'dodge') {
-        const u = this.heldUnit >= 0 ? this.units[this.heldUnit] : null;
+        const u = this.held[team] >= 0 ? this.units[this.held[team]] : null;
         if (!u || u.state !== ALIVE || u.dodgeTimer > 0 || u.lockoutTimer > 0) continue;
         if (u.energy <= this.T.dodgeCost) continue; // can't roll yourself to death
         u.energy -= this.T.dodgeCost;
         u.dodgeTimer = this.T.dodgeDurSec;
-        u.heading = this.aimAngle; // roll direction locked at trigger
+        u.heading = this.aim[team]; // roll direction locked at trigger
         this.events.push({ type: 'dodge', unit: u.id, tick: this.tick });
       } else if (cmd.type === 'refocus') {
         // Drop the current lock so the first NEW cone entrant takes priority.
-        const u = this.heldUnit >= 0 ? this.units[this.heldUnit] : null;
+        const u = this.held[team] >= 0 ? this.units[this.held[team]] : null;
         if (!u) continue;
         u.targetId = -1; u.lockQ = 0; u.lockCap = 0; u.entryQ = 0; u.outOfConeTime = 0;
         u.enteredConeTick.fill(-1);
@@ -255,7 +279,7 @@
     if (u.state !== ALIVE) return;
     u.state = CRYSTALLIZING;
     u.crystallizeTimer = 0;
-    if (u.held) { u.held = false; this.heldUnit = -1; }
+    if (u.held) { u.held = false; this.held[u.team] = -1; }
     this.events.push({ type: 'crystallizing', unit: u.id, cause: cause, tick: this.tick });
   };
 
@@ -394,9 +418,9 @@
         u.dodgeTimer -= dt;
         if (u.dodgeTimer <= 0) u.lockoutTimer = T.dodgeLockoutSec;
       } else if (u.held) {
-        if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aimAngle, T.heldTurnRate * dt);
-      } else if (u.team === PLAYER) {
-        // Unpossessed player ship: the juggle clock runs.
+        if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], T.heldTurnRate * dt);
+      } else if (this.human[u.team]) {
+        // Unpossessed ship on a human-flown side: the juggle clock runs.
         u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
         u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
       } else {
@@ -437,13 +461,13 @@
         if (nearest) {
           const away = Math.atan2(u.y - nearest.y, u.x - nearest.x);
           const urgency = 1 - Math.max(0, nearestGap) / T.avoidRange;
-          const str = u.team === PLAYER ? u.momentum : 1;
+          const str = this.human[u.team] ? u.momentum : 1;
           u.heading = turnToward(u.heading, away, T.avoidSteer * str * urgency * dt);
         }
       }
 
-      // --- Stall (player team only — opposition doesn't juggle) ---
-      if (u.team === PLAYER && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
+      // --- Stall (human-flown sides only — the AI opposition does not juggle) ---
+      if (this.human[u.team] && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
         u.vx = 0; u.vy = 0;
         u.stallTimer += dt;
         if (u.stallTimer >= T.stallGraceSec) this._kill(u, 'stalled');
@@ -451,7 +475,7 @@
       }
 
       // --- Movement ---
-      let speed = u.team === PLAYER
+      let speed = this.human[u.team]
         ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed)
         : cls.speed;
       if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
@@ -586,10 +610,51 @@
     return e;
   };
 
+  // --- Network snapshot (LAN multiplayer). The server owns the one true sim and
+  // ships this to clients ~30x/s; clients copy it into a local Sim that they only
+  // render (never step), so different browsers' float maths can't drift apart.
+  const r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
+  const STATE_CODE = { alive: 0, crystallizing: 1, crystallized: 2 };
+  const CODE_STATE = ['alive', 'crystallizing', 'crystallized'];
+  Sim.prototype.snapshot = function (events) {
+    const units = this.units.map(u => [
+      r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
+      STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
+      r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
+    ]);
+    const proj = [];
+    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
+    return {
+      tick: this.tick, held: this.held.slice(), aim: this.aim.map(r3), human: this.human.slice(),
+      units: units, proj: proj,
+      hazards: this.hazards.map(h => [r2(h.x), r2(h.y), r2(h.r), h.salvage ? 1 : 0]),
+      events: events || [],
+    };
+  };
+  Sim.prototype.applySnapshot = function (snap) {
+    this.tick = snap.tick; this.held = snap.held; this.aim = snap.aim; this.human = snap.human;
+    snap.units.forEach((a, i) => {
+      const u = this.units[i];
+      if (!u) return;
+      u.x = a[0]; u.y = a[1]; u.heading = a[2]; u.gunAngle = a[3]; u.momentum = a[4]; u.energy = a[5];
+      u.state = CODE_STATE[a[6]]; u.held = !!a[7]; u.targetId = a[8]; u.lockQ = a[9]; u.lockCap = a[10];
+      u.entryQ = a[11]; u.crystallizeTimer = a[12];
+      a[13].forEach((hp, k) => { if (u.weak[k]) { u.weak[k].out = hp < 0; u.weak[k].hp = Math.max(0, hp); } });
+    });
+    let k = 0;
+    for (const p of this.projectiles) {
+      const a = snap.proj[k];
+      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; k++; }
+      else p.active = false;
+    }
+    this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));
+    this.events = snap.events;
+  };
+
   Sim.prototype.stateHash = function () {
     let h = 0x811c9dc5;
     const mix = str => { for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } };
-    mix('t' + this.tick + 'h' + this.heldUnit);
+    mix('t' + this.tick + 'h' + this.held.join(',') + 'm' + this.human.join(','));
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
           ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId + ',' + u.lockQ.toFixed(4));
