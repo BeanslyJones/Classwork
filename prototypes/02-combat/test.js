@@ -83,6 +83,10 @@ function duel(roster, extra) {
   for (let t = 0; t < 30; t++) s.step();
   assert(aaa.targetId === e1.id, 'priority sticks with the FIRST entrant while it stays in cone');
   // Refocus drops the lock; with both in cone, the earlier re-entrant wins next tick.
+  // Fixed guns: the cone rides the hull, so re-stage both foes ahead of the nose.
+  const fwd = aaa.heading;
+  e1.x = aaa.x + Math.cos(fwd) * 120; e1.y = aaa.y + Math.sin(fwd) * 120;
+  e2.x = aaa.x + Math.cos(fwd + 0.3) * 120; e2.y = aaa.y + Math.sin(fwd + 0.3) * 120;
   s.command({ type: 'grab', unit: aaa.id });
   s.command({ type: 'refocus' });
   s.step();
@@ -98,7 +102,10 @@ function duel(roster, extra) {
   a.x = -150; a.y = 0; a.heading = 0; a.gunAngle = 0;
   b.x = 150; b.y = 0; b.heading = Math.PI; b.gunAngle = Math.PI;
   const spreads = [];
+  // Fixed guns: the pilot keeps the nose on the target (held + aimed each tick).
+  s.command({ type: 'grab', unit: a.id });
   for (let t = 0; t < 400; t++) {
+    s.command({ type: 'aim', angle: Math.atan2(b.y - a.y, b.x - a.x) });
     s.step();
     for (const e of s.events) if (e.type === 'fired' && e.unit === a.id) spreads.push(e.spread);
   }
@@ -106,6 +113,27 @@ function duel(roster, extra) {
   assert(spreads[0] > 0 && spreads[spreads.length - 1] < spreads[0] * 0.5,
     'spread tightens as lock builds (' + spreads[0].toFixed(3) + ' -> ' + spreads[spreads.length - 1].toFixed(3) + ')');
   assert(spreads[spreads.length - 1] === 0 || spreads[spreads.length - 1] < 0.01, 'full lock -> (near) zero spread');
+}
+
+// --- 5b. Only capitals have turrets. ----------------------------------------
+{
+  console.log('\n[turrets: capitals only]');
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: PLAYER },
+                  { cls: 'fighter', team: ENEMY }]);
+  const [f, cap, foe] = s.units;
+  f.x = 0; f.y = 0; f.heading = 0; f.gunAngle = 0;
+  cap.x = 0; cap.y = 200; cap.heading = 0; cap.gunAngle = 0;
+  foe.x = 0; foe.y = 100; // abeam of both: off the fighter's nose, inside capital turret range
+  let fighterGunOff = 0;
+  for (let t = 0; t < 45; t++) {
+    s.step();
+    fighterGunOff = Math.max(fighterGunOff, Math.abs(f.gunAngle - f.heading));
+  }
+  assert(fighterGunOff === 0, 'fighter gun never leaves the hull heading (fixed forward guns)');
+  assert(Math.abs(cap.gunAngle - cap.heading) > 0.3, 'capital turret swings off the hull toward a target');
+  for (const k in CLASSES) {
+    assert(CLASSES[k].turret === (k === 'capital'), k + (k === 'capital' ? ' has a turret' : ' has no turret'));
+  }
 }
 
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------
@@ -170,11 +198,11 @@ function battle(seed, useBot, ticks) {
   return { alive: sim.aliveCount(PLAYER), foesLeft: sim.aliveCount(ENEMY), shipSeconds: shipSeconds, energy: sim.teamEnergy(PLAYER) };
 }
 {
-  console.log('\n[GATE: neglect visibly costs]  (4v4, 2700 ticks = 90s)');
+  console.log('\n[GATE: neglect visibly costs]  (5v5 incl. capitals, 2700 ticks = 90s)');
   const neglect = battle(SEED, false, 2700);
   const juggled = battle(SEED, true, 2700);
-  console.log('    neglected: alive ' + neglect.alive + '/4, foes left ' + neglect.foesLeft + ', ship-seconds ' + neglect.shipSeconds.toFixed(0));
-  console.log('    juggled:   alive ' + juggled.alive + '/4, foes left ' + juggled.foesLeft + ', ship-seconds ' + juggled.shipSeconds.toFixed(0));
+  console.log('    neglected: alive ' + neglect.alive + '/5, foes left ' + neglect.foesLeft + ', ship-seconds ' + neglect.shipSeconds.toFixed(0));
+  console.log('    juggled:   alive ' + juggled.alive + '/5, foes left ' + juggled.foesLeft + ', ship-seconds ' + juggled.shipSeconds.toFixed(0));
   assert(juggled.alive > neglect.alive, 'juggling keeps more ships alive than neglect');
   assert(juggled.shipSeconds > neglect.shipSeconds * 1.3, 'juggling buys >30% more ship-seconds');
   assert(neglect.alive === 0 || neglect.foesLeft > juggled.foesLeft, 'neglected team also loses the damage race');

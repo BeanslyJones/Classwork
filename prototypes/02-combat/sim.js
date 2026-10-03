@@ -44,17 +44,24 @@
 
   // Shared class table — the SAME rows drive player ships and opposition.
   // Unity port: one ScriptableObject per row; numbers become [Range] fields there.
+  // turret: only capital ships carry a rotating turret. Everything else has
+  // fixed forward guns — the cone points where the hull points, so to shoot
+  // something you have to fly at it. gunTurn is only read when turret is true.
+  // size: collision radius multiplier on unitRadius.
   const CLASSES = {
-    fighter:     { speed: 150, turnRate: 2.6, energyMax: 100, gunTurn: 4.0,
+    fighter:     { speed: 150, turnRate: 2.6, energyMax: 100, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.35, coneRange: 230, cooldown: 0.50, shotCost: 2.0, damage: 6,  aoe: 26, projSpeed: 330 },
-    bomber:      { speed: 100, turnRate: 1.6, energyMax: 170, gunTurn: 2.2,
+    bomber:      { speed: 100, turnRate: 1.6, energyMax: 170, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.50, coneRange: 270, cooldown: 1.60, shotCost: 6.0, damage: 18, aoe: 72, projSpeed: 180 },
-    heavy:       { speed: 112, turnRate: 1.1, energyMax: 210, gunTurn: 2.8,
+    heavy:       { speed: 112, turnRate: 1.1, energyMax: 210, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.16, coneRange: 320, cooldown: 0.80, shotCost: 4.0, damage: 14, aoe: 18, projSpeed: 430 },
-    interceptor: { speed: 215, turnRate: 3.6, energyMax: 60,  gunTurn: 5.0,
+    interceptor: { speed: 215, turnRate: 3.6, energyMax: 60,  turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.40, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 4,  aoe: 16, projSpeed: 370 },
-    aaa:         { speed: 70,  turnRate: 1.0, energyMax: 150, gunTurn: 6.5,
+    aaa:         { speed: 70,  turnRate: 1.0, energyMax: 150, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 1.10, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 3,  aoe: 36, projSpeed: 260 },
+    // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
+    capital:     { speed: 45,  turnRate: 0.45, energyMax: 520, turret: true,  gunTurn: 1.8, size: 2.2,
+                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 12, aoe: 30, projSpeed: 300 },
   };
 
   function mulberry32(seed) {
@@ -77,13 +84,16 @@
   const ALIVE = 'alive', CRYSTALLIZING = 'crystallizing', CRYSTALLIZED = 'crystallized';
   const PLAYER = 0, ENEMY = 1;
 
-  // roster: array of {cls, team}. Default: mirror 4v4.
+  // roster: array of {cls, team}. Default: mirror 5v5 — four fixed-gun ships
+  // plus one turreted capital per side.
   function defaultRoster() {
     return [
       { cls: 'fighter', team: PLAYER }, { cls: 'bomber', team: PLAYER },
       { cls: 'heavy', team: PLAYER }, { cls: 'interceptor', team: PLAYER },
+      { cls: 'capital', team: PLAYER },
       { cls: 'fighter', team: ENEMY }, { cls: 'bomber', team: ENEMY },
       { cls: 'heavy', team: ENEMY }, { cls: 'interceptor', team: ENEMY },
+      { cls: 'capital', team: ENEMY },
     ];
   }
 
@@ -227,6 +237,15 @@
     return Math.abs(wrapAngle(Math.atan2(dy, dx) - u.gunAngle)) <= cls.coneHalf;
   };
 
+  // Acquisition zone. Fixed guns can only acquire what is in the forward cone.
+  // A turret acquires anything in range, at any bearing, then slews onto it.
+  Sim.prototype._canAcquire = function (u, v) {
+    if (!CLASSES[u.cls].turret) return this._inCone(u, v);
+    const cls = CLASSES[u.cls];
+    const dx = v.x - u.x, dy = v.y - u.y;
+    return dx * dx + dy * dy <= cls.coneRange * cls.coneRange;
+  };
+
   Sim.prototype._fireProjectile = function (u, angle) {
     const cls = CLASSES[u.cls];
     let p = null;
@@ -247,9 +266,10 @@
     for (const u of this.units) {
       if (u.state !== ALIVE) continue;
       if (u.team === p.team && !this.T.friendlyFire) continue; // FF is a separate toggle, off
+      const ur = this.T.unitRadius * CLASSES[u.cls].size;
       const d = Math.hypot(u.x - p.x, u.y - p.y);
-      if (d < p.aoe + this.T.unitRadius) {
-        const falloff = 1 - Math.max(0, d - this.T.unitRadius) / p.aoe;
+      if (d < p.aoe + ur) {
+        const falloff = 1 - Math.max(0, d - ur) / p.aoe;
         this._damage(u, p.damage * falloff, 'shot');
       }
     }
@@ -310,9 +330,16 @@
             if (d < tgtD) { tgtD = d; tgt = v; }
           }
           if (tgt && (u.tier === 0 || (this.tick & 1) === 0)) {
-            const want = tgtD > cls.coneRange * 0.7
-              ? Math.atan2(tgt.y - u.y, tgt.x - u.x)
-              : Math.atan2(tgt.y - u.y, tgt.x - u.x) + Math.PI / 2; // orbit at range
+            const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
+            let want;
+            if (cls.turret) {
+              // Turret ship: close to range, then orbit and let the turret work.
+              want = tgtD > cls.coneRange * 0.7 ? toTgt : toTgt + Math.PI / 2;
+            } else {
+              // Fixed guns: strafing runs. Nose on target; peel off when too
+              // close, swing back around for the next pass.
+              want = tgtD > cls.coneRange * 0.35 ? toTgt : toTgt + Math.PI * 0.6;
+            }
             u.heading = turnToward(u.heading, want, cls.turnRate * dt * (u.tier === 1 ? 2 : 1));
           }
         }
@@ -354,9 +381,11 @@
       }
 
       for (const h of this.hazards) {
-        if (Math.hypot(u.x - h.x, u.y - h.y) < h.r + T.unitRadius) { this._kill(u, 'contact'); break; }
+        if (Math.hypot(u.x - h.x, u.y - h.y) < h.r + T.unitRadius * cls.size) { this._kill(u, 'contact'); break; }
       }
       if (u.state !== ALIVE) continue;
+
+      if (!cls.turret) u.gunAngle = u.heading; // fixed guns ride the hull
 
       // --- Gunnery. Reduced tier: every 2nd tick. Dormant: no acquisition at all. ---
       if (u.tier === 2 || (u.tier === 1 && (this.tick & 1) === 1)) continue;
@@ -364,16 +393,16 @@
       // Track cone entry ticks for first-to-enter priority.
       for (const v of this.units) {
         if (v.team === u.team || v.state !== ALIVE) { u.enteredConeTick[v ? v.id : 0] = -1; continue; }
-        const inCone = this._inCone(u, v);
-        if (inCone && u.enteredConeTick[v.id] < 0) u.enteredConeTick[v.id] = this.tick;
-        if (!inCone) u.enteredConeTick[v.id] = -1;
+        const inZone = this._canAcquire(u, v);
+        if (inZone && u.enteredConeTick[v.id] < 0) u.enteredConeTick[v.id] = this.tick;
+        if (!inZone) u.enteredConeTick[v.id] = -1;
       }
 
       // Validate / acquire target. First to enter the cone wins and keeps priority.
       let target = u.targetId >= 0 ? this.units[u.targetId] : null;
       if (target && (target.state !== ALIVE)) { target = null; u.targetId = -1; u.lockTime = 0; }
       if (target) {
-        if (this._inCone(u, target)) { u.outOfConeTime = 0; }
+        if (this._canAcquire(u, target)) { u.outOfConeTime = 0; }
         else {
           u.outOfConeTime += dt;
           if (u.outOfConeTime > T.coneGraceSec) { target = null; u.targetId = -1; u.lockTime = 0; u.outOfConeTime = 0; }
@@ -389,9 +418,14 @@
         if (best >= 0) { u.targetId = best; u.lockTime = 0; u.outOfConeTime = 0; target = this.units[best]; }
       }
 
-      // Gun rotates independently of the hull: toward target, else settles on heading.
-      const gunGoal = target ? Math.atan2(target.y - u.y, target.x - u.x) : u.heading;
-      u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * dt);
+      // Turret (capitals only) rotates independently of the hull: toward target,
+      // else settles on heading. Fixed guns always point where the hull points.
+      if (cls.turret) {
+        const gunGoal = target ? Math.atan2(target.y - u.y, target.x - u.x) : u.heading;
+        u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * dt);
+      } else {
+        u.gunAngle = u.heading;
+      }
 
       if (target && this._inCone(u, target)) {
         u.lockTime += dt;
@@ -419,7 +453,7 @@
         for (const u of this.units) {
           if (u.state !== ALIVE || u.id === p.owner) continue;
           if (u.team === p.team && !this.T.friendlyFire) continue;
-          if (Math.hypot(u.x - p.x, u.y - p.y) < this.T.unitRadius + 4) { boom = true; break; }
+          if (Math.hypot(u.x - p.x, u.y - p.y) < this.T.unitRadius * CLASSES[u.cls].size + 4) { boom = true; break; }
         }
       }
       if (!boom) {

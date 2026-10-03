@@ -1,12 +1,16 @@
 # 02 · Combat (build order step 2)
 
 The juggle from 01 with guns on it. One shared class table drives both teams —
-fighter, bomber, heavy, interceptor, AAA — players juggle theirs, the opposition
-AI pilots the same rows.
+fighter, bomber, heavy, interceptor, AAA, capital — players juggle theirs, the
+opposition AI pilots the same rows. Default battle is 5v5: four fixed-gun ships
+plus one capital per side.
 
 ## Run
 
 - **Play:** open `combat.html` (mouse or touch; DODGE button / Space, F refocus).
+  **Game speed** slider bottom-left (default 0.5×, presets ¼× ½× 1×, pause / P);
+  remembered between visits. It only changes how fast real time feeds the
+  fixed-tick sim, so results are identical at any speed.
 - **Verify:** `node test.js`.
 
 ## Combat rules implemented (all headless-verified)
@@ -19,7 +23,11 @@ AI pilots the same rows.
 - Spread scales with lock quality (zero at full lock, `lockTimeFull`).
 - First-to-enter-cone target priority, sticky while in cone (+ grace), `refocus`
   command drops the lock.
-- Guns rotate independently of hull (`gunAngle`, per-class `gunTurn`).
+- **Only capital ships have turrets.** Every other class has fixed forward guns:
+  the cone points where the hull points, so you aim by flying at the target.
+  Fixed-gun AI flies strafing runs (nose on target, peel off when close, come
+  back around). Capitals acquire anything in range at any bearing and slew the
+  turret (`gunTurn`) onto it; they fire once it's in the cone.
 - Dodge = barrel roll: dead-straight line, flat energy cost, turn lockout after.
 - One energy pool per ship = health + ammo + boost. Ships hold fire below an
   energy floor. No recharge yet — that arrives with friendly fields (step 4).
@@ -28,9 +36,11 @@ AI pilots the same rows.
 
 ## Gate
 
-**Does neglect visibly cost?** Headless proxy (4v4, 90s, seed 4242): neglected
-team wiped with 2 foes standing (75 ship-seconds); bot-juggled team cleared all
-foes with a survivor (171 ship-seconds). Costs, visibly.
+**Does neglect visibly cost?** Headless proxy (5v5 with capitals, 90s, seed
+4242): neglected team wiped with all 5 foes standing (97 ship-seconds);
+bot-juggled team kept 3 alive and left 1 foe (323 ship-seconds). Costs, visibly.
+With fixed guns an unflown ship rarely lines up a shot, so neglect now costs
+firepower as well as ships.
 
 ## Deferred (flagged, not decided)
 

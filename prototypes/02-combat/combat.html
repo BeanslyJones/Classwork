@@ -15,6 +15,12 @@
   #dodgeBtn { position: absolute; bottom: 22px; right: 22px; z-index: 8; font-size: 15px; font-weight: 700;
               padding: 18px 22px; border-radius: 50px; background: #23304a; border: 1px solid #3a4a6a; color: #cdd6e4; }
   #dodgeBtn:active { background: #3a4a6a; }
+  #speedBox { position: absolute; bottom: 22px; left: 16px; z-index: 8; background: rgba(16,20,29,.85);
+              border: 1px solid #2e3a52; border-radius: 10px; padding: 8px 12px; width: 200px; }
+  #speedBox label { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
+  #speedBox input { width: 100%; }
+  #speedBox .row { display: flex; gap: 6px; margin-top: 6px; }
+  #speedBox .row button { flex: 1; margin: 0; padding: 6px 0; }
   @media (max-width: 700px) {
     #panelToggle { display: block; }
     #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
@@ -41,14 +47,21 @@
     <div id="hud"></div>
     <button id="panelToggle">⚙</button>
     <button id="dodgeBtn">DODGE</button>
+    <div id="speedBox">
+      <label>Game speed <span id="speedVal">0.5×</span></label>
+      <input type="range" id="speed" min="0.1" max="2" step="0.05" value="0.5">
+      <div class="row"><button data-s="0.25">¼×</button><button data-s="0.5">½×</button><button data-s="1">1×</button><button id="pauseBtn">❚❚</button></div>
+    </div>
   </div>
   <div id="panel">
     <h1>02 · COMBAT</h1>
     <div class="hint">
-      Blue = yours, red = opposition (same class table). Press near a blue ship to grab, drag to aim, lift to fling.
+      Blue = yours, red = opposition (same class table). Only capitals (big ships) have
+      turrets; every other ship's guns fire straight ahead, so aim by pointing the ship. Press near a blue ship to grab, drag to aim, lift to fling.
       DODGE (or Space) barrel-rolls the held ship: straight line, big energy cost, turn lockout after.<br><br>
       Guns are automatic: cones acquire first entrant, cooldown only ticks on a valid target, spread tightens with lock.
-      One energy pool = health + ammo + boost. F: refocus. 1–4: grab bank. R: restart. N: new seed.
+      One energy pool = health + ammo + boost. F: refocus. 1–5: grab bank. R: restart. N: new seed.
+      Game speed (bottom left) slows the whole battle down; P pauses.
     </div>
     <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
     <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES <span style="color:#5b6880">(hover for tooltip)</span></div>
@@ -98,6 +111,25 @@ document.getElementById('btnSeed').addEventListener('click', () => restart(true)
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
 document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); sim.command({ type: 'dodge' }); });
 
+// ---- Game speed: scales real time fed to the fixed-tick sim. The sim itself is
+// untouched (same ticks, same results), it just advances slower or faster. ----
+let gameSpeed = 0.5, paused = false;
+try { const v = parseFloat(localStorage.getItem('rw02.speed')); if (v >= 0.1 && v <= 2) gameSpeed = v; } catch (e) {}
+const speedIn = document.getElementById('speed'), speedVal = document.getElementById('speedVal');
+const pauseBtn = document.getElementById('pauseBtn');
+function setSpeed(v) {
+  gameSpeed = v; speedIn.value = v;
+  speedVal.textContent = paused ? 'paused' : (Math.round(v * 100) / 100) + '×';
+  try { localStorage.setItem('rw02.speed', String(v)); } catch (e) {}
+}
+function setPaused(p) { paused = p; pauseBtn.textContent = p ? '▶' : '❚❚'; setSpeed(gameSpeed); }
+speedIn.addEventListener('input', e => setSpeed(parseFloat(e.target.value)));
+document.querySelectorAll('#speedBox button[data-s]').forEach(b =>
+  b.addEventListener('click', () => { setPaused(false); setSpeed(parseFloat(b.dataset.s)); }));
+pauseBtn.addEventListener('click', () => setPaused(!paused));
+document.getElementById('speedBox').addEventListener('pointerdown', e => e.stopPropagation());
+setSpeed(gameSpeed);
+
 // ---- Pointer input: one path for mouse and touch. ----
 let pointer = { x: 0, y: 0, down: false, id: -1 };
 let cam = { scale: 1, ox: 0, oy: 0 };
@@ -140,6 +172,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'f' || e.key === 'F') sim.command({ type: 'refocus' });
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
+  if (e.key === 'p' || e.key === 'P') setPaused(!paused);
 });
 window.addEventListener('keyup', e => {
   if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; sim.command({ type: 'release' }); }
@@ -153,7 +186,7 @@ const flashes = []; // detonation ring effects (render-only, never touches sim s
 function frame(now) {
   const dtReal = Math.min(0.1, (now - last) / 1000);
   last = now;
-  acc += dtReal;
+  acc += paused ? 0 : dtReal * gameSpeed;
   const stepLen = 1 / sim.T.tickRate;
   while (acc >= stepLen) {
     if (pointer.down && sim.heldUnit >= 0) {
@@ -211,11 +244,12 @@ function render(dtReal) {
   for (const u of sim.units) {
     if (u.state === 'crystallized') continue;
     const cls = CLASSES[u.cls];
-    const r = sim.T.unitRadius * (u.cls === 'bomber' || u.cls === 'heavy' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
+    const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
     ctx.translate(u.x, u.y);
 
-    // Firing cone (faint), drawn at the GUN angle — visibly independent of hull
+    // Firing cone (faint), drawn at the gun angle: the hull heading for fixed guns,
+    // the turret angle for capitals.
     if (u.state === 'alive') {
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -243,7 +277,12 @@ function render(dtReal) {
 
     ctx.rotate(u.heading);
     ctx.beginPath();
-    ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
+    if (cls.turret) { // capital: blunt slab hull
+      ctx.moveTo(r * 1.3, 0); ctx.lineTo(r * 0.6, r * 0.7); ctx.lineTo(-r, r * 0.7);
+      ctx.lineTo(-r, -r * 0.7); ctx.lineTo(r * 0.6, -r * 0.7);
+    } else {
+      ctx.moveTo(r * 1.4, 0); ctx.lineTo(-r, r * 0.8); ctx.lineTo(-r * 0.5, 0); ctx.lineTo(-r, -r * 0.8);
+    }
     ctx.closePath();
     if (u.state === 'crystallizing') {
       const f = u.crystallizeTimer / sim.T.crystallizeSec;
@@ -254,13 +293,16 @@ function render(dtReal) {
     ctx.fill();
     ctx.restore();
 
-    // Gun barrel drawn separately at gunAngle
-    if (u.state === 'alive') {
+    // Turret (capitals only): dome + barrel drawn at gunAngle, independent of hull.
+    if (u.state === 'alive' && cls.turret) {
+      ctx.beginPath(); ctx.arc(u.x, u.y, r * 0.38, 0, 7);
+      ctx.fillStyle = '#0b0e14'; ctx.fill();
+      ctx.strokeStyle = u.held ? '#fff' : TEAMCOL[u.team];
+      ctx.lineWidth = 2 / cam.scale; ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(u.x, u.y);
-      ctx.lineTo(u.x + Math.cos(u.gunAngle) * r * 2, u.y + Math.sin(u.gunAngle) * r * 2);
-      ctx.strokeStyle = u.held ? '#fff' : TEAMCOL[u.team];
-      ctx.lineWidth = 2.5 / cam.scale;
+      ctx.lineTo(u.x + Math.cos(u.gunAngle) * r * 1.5, u.y + Math.sin(u.gunAngle) * r * 1.5);
+      ctx.lineWidth = 3.5 / cam.scale;
       ctx.stroke();
     }
 
