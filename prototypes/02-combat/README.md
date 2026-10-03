@@ -14,7 +14,12 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
   **Camera** (top right, C cycles): *Fit* keeps all your ships framed (max zoom
   slider), *Snap* zooms the whole screen to the ship you're flying or last
   flew, *Bubble* keeps the wide view with a magnifier around that ship. Every
-  camera number is a slider in the panel. Render-only, never touches the sim.
+  camera number is a slider in the panel, and the active mode's zoom also has
+  a slider right under the camera buttons. Grabbing a ship selects it; tapping
+  empty space (or Esc) deselects and closes the bubble. Ships hidden under the
+  bubble show through as outlines at their true positions. Render-only, never
+  touches the sim.
+- Every class has its own hull silhouette (render-only `HULLS` table in the page).
 - **Verify:** `node test.js`.
 
 ## Combat rules implemented (all headless-verified)
