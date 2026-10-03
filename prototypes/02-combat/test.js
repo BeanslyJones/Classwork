@@ -136,6 +136,42 @@ function duel(roster, extra) {
   }
 }
 
+// --- 5c. Capital weak points. -----------------------------------------------
+{
+  console.log('\n[capital weak points]');
+  function blastAt(localX, localY) {
+    const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: ENEMY }]);
+    const cap = s.units[1];
+    cap.x = 0; cap.y = 0; cap.heading = 0.7; // rotated hull: weak points must ride with it
+    const ur = s.T.unitRadius * CLASSES.capital.size;
+    const c = Math.cos(cap.heading), sn = Math.sin(cap.heading);
+    const bx = (localX * c - localY * sn) * ur, by = (localX * sn + localY * c) * ur;
+    const e0 = cap.energy;
+    s._detonate({ active: true, x: bx, y: by, damage: 10, aoe: 20, team: PLAYER, owner: 0 });
+    return { s: s, cap: cap, dmg: e0 - cap.energy };
+  }
+  const plain = blastAt(0.0, 0.0);   // mid-hull, clear of every weak point
+  const engine = blastAt(-1.0, 0.0); // right on the engines
+  assert(engine.dmg > plain.dmg * 2, 'weak-point hit does crit damage (' + engine.dmg.toFixed(1) + ' vs ' + plain.dmg.toFixed(1) + ')');
+  assert(engine.cap.weak.find(w => w.type === 'engine').hp < engine.s.T.weakHp, 'hit wears the weak point down');
+
+  // Knock each one out and check its consequence.
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: ENEMY }]);
+  const cap = s.units[1];
+  cap.x = 0; cap.y = 0;
+  for (const w of cap.weak) { w.hp = 0; w.out = true; }
+  const e0 = cap.energy;
+  const x0 = cap.x, y0 = cap.y;
+  s.step();
+  assert(cap.energy < e0, 'breached vents bleed energy');
+  const moved = Math.hypot(cap.x - x0, cap.y - y0);
+  assert(Math.abs(moved - CLASSES.capital.speed * s.T.engineCripple / TICK_RATE) < 0.01, 'engines out -> crippled speed');
+  const before = cap.gunAngle;
+  const f = s.units[0]; f.x = cap.x + 100; f.y = cap.y + 100;
+  for (let t = 0; t < 30; t++) s.step();
+  assert(cap.gunAngle === before && s.poolStats.fired === 0, 'bridge out -> turret stops tracking and firing');
+}
+
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------
 {
   console.log('\n[dodge]');

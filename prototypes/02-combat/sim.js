@@ -16,7 +16,7 @@
     arenaRadius:     { value: 560,   min: 200, max: 2000, tooltip: 'Soft arena radius. No boundary death.' },
     edgeSteer:       { value: 2.2,   min: 0,   max: 10,   tooltip: 'Corrective turn (rad/s) past the soft edge.' },
     minSpeed:        { value: 18,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
-    momentumDrain:   { value: 0.055, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
+    momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
     driftNoise:      { value: 1.4,   min: 0,   max: 8,    tooltip: 'Heading wobble (rad/s) at zero momentum.' },
     stallGraceSec:   { value: 2.5,   min: 0.5, max: 10,   tooltip: 'Seconds a stalled unit can still be saved.' },
     crystallizeSec:  { value: 1.2,   min: 0.1, max: 5,    tooltip: 'Seconds from fatal blow to crystallized salvage.' },
@@ -37,6 +37,10 @@
     dodgeDurSec:     { value: 0.45,  min: 0.1, max: 2,    tooltip: 'Roll duration.' },
     dodgeLockoutSec: { value: 0.8,   min: 0,   max: 3,    tooltip: 'Turn lockout after the roll — readable and interceptable.' },
     projTtlSec:      { value: 2.2,   min: 0.5, max: 6,    tooltip: 'Projectile lifetime; flak detonates at end of life.' },
+    weakCritMult:    { value: 2.5,   min: 1,   max: 6,    tooltip: 'Damage multiplier when a blast lands on a capital weak point.' },
+    weakHp:          { value: 45,    min: 5,   max: 300,  tooltip: 'Damage a weak point absorbs before it is knocked out.' },
+    ventLeak:        { value: 3,     min: 0,   max: 20,   tooltip: 'Energy/sec a capital bleeds per breached reactor vent.' },
+    engineCripple:   { value: 0.5,   min: 0.1, max: 1,    tooltip: 'Speed and turn multiplier once a capital loses its engines.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -60,8 +64,20 @@
     aaa:         { speed: 70,  turnRate: 1.0, energyMax: 150, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 1.10, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 3,  aoe: 36, projSpeed: 260 },
     // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
+    // weakPoints: spots on the hull in hull-local units of the ship's radius
+    // (+x = nose). A blast landing on one does weakCritMult damage and wears
+    // it down; knocked out, it costs the ship something:
+    //   bridge -> turret fire control offline   engine -> speed/turn crippled
+    //   vent   -> hull bleeds energy (ventLeak)
+    // Different capital types are just different rows with different layouts.
     capital:     { speed: 45,  turnRate: 0.45, energyMax: 520, turret: true,  gunTurn: 1.8, size: 2.2,
-                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 12, aoe: 30, projSpeed: 300 },
+                   coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 12, aoe: 30, projSpeed: 300,
+                   weakPoints: [
+                     { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
+                     { type: 'engine', x: -1.0,  y: 0,     r: 0.45 },
+                     { type: 'vent',   x: -0.1,  y: 0.75,  r: 0.35 },
+                     { type: 'vent',   x: -0.1,  y: -0.75, r: 0.35 },
+                   ] },
   };
 
   function mulberry32(seed) {
@@ -158,6 +174,7 @@
         beingShotTimer: 0, // set when damaged; drives the "being shot" attrition condition later
         tier: 0, // 0 Active, 1 Reduced, 2 Dormant — update gating
         state: ALIVE, held: false,
+        weak: (cls.weakPoints || []).map(w => ({ type: w.type, x: w.x, y: w.y, r: w.r, hp: this.T.weakHp, out: false })),
       });
     }
 
@@ -260,6 +277,27 @@
     this.poolStats.fired++;
   };
 
+  Sim.prototype._weakFlag = function (u, type) {
+    for (const w of u.weak) if (w.out && w.type === type) return true;
+    return false;
+  };
+
+  // Which intact weak point (if any) a blast at (bx, by) lands on.
+  Sim.prototype._weakHit = function (u, bx, by) {
+    if (!u.weak.length) return null;
+    const ur = this.T.unitRadius * CLASSES[u.cls].size;
+    const c = Math.cos(-u.heading), s = Math.sin(-u.heading);
+    const dx = bx - u.x, dy = by - u.y;
+    const lx = (dx * c - dy * s) / ur, ly = (dx * s + dy * c) / ur; // hull-local, radius units
+    let best = null, bestD = Infinity;
+    for (const w of u.weak) {
+      if (w.out) continue;
+      const d = Math.hypot(lx - w.x, ly - w.y);
+      if (d < w.r + 6 / ur && d < bestD) { bestD = d; best = w; }
+    }
+    return best;
+  };
+
   Sim.prototype._detonate = function (p) {
     p.active = false;
     this.events.push({ type: 'detonation', x: p.x, y: p.y, aoe: p.aoe, tick: this.tick });
@@ -270,7 +308,18 @@
       const d = Math.hypot(u.x - p.x, u.y - p.y);
       if (d < p.aoe + ur) {
         const falloff = 1 - Math.max(0, d - ur) / p.aoe;
-        this._damage(u, p.damage * falloff, 'shot');
+        let dmg = p.damage * falloff;
+        const w = this._weakHit(u, p.x, p.y);
+        if (w) {
+          dmg *= this.T.weakCritMult;
+          w.hp -= dmg;
+          this.events.push({ type: 'weakHit', unit: u.id, weak: w.type, tick: this.tick });
+          if (w.hp <= 0) {
+            w.hp = 0; w.out = true;
+            this.events.push({ type: 'weakDown', unit: u.id, weak: w.type, x: p.x, y: p.y, tick: this.tick });
+          }
+        }
+        this._damage(u, dmg, 'shot');
       }
     }
   };
@@ -309,6 +358,15 @@
       if (u.beingShotTimer > 0) u.beingShotTimer -= dt;
       if (u.lockoutTimer > 0) u.lockoutTimer -= dt;
 
+      // Knocked-out weak points keep costing the capital.
+      let cripple = 1;
+      if (u.weak.length) {
+        let vents = 0;
+        for (const w of u.weak) if (w.out && w.type === 'vent') vents++;
+        if (vents) { this._damage(u, vents * T.ventLeak * dt, 'breach'); if (u.state !== ALIVE) continue; }
+        if (this._weakFlag(u, 'engine')) cripple = T.engineCripple;
+      }
+
       // --- Steering ---
       if (u.dodgeTimer > 0) {
         // Barrel roll: dead straight, no steering of any kind.
@@ -340,7 +398,7 @@
               // close, swing back around for the next pass.
               want = tgtD > cls.coneRange * 0.35 ? toTgt : toTgt + Math.PI * 0.6;
             }
-            u.heading = turnToward(u.heading, want, cls.turnRate * dt * (u.tier === 1 ? 2 : 1));
+            u.heading = turnToward(u.heading, want, cls.turnRate * cripple * dt * (u.tier === 1 ? 2 : 1));
           }
         }
       }
@@ -372,6 +430,7 @@
         ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed)
         : cls.speed;
       if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
+      speed *= cripple;
       u.x += Math.cos(u.heading) * speed * dt;
       u.y += Math.sin(u.heading) * speed * dt;
 
@@ -420,6 +479,7 @@
 
       // Turret (capitals only) rotates independently of the hull: toward target,
       // else settles on heading. Fixed guns always point where the hull points.
+      if (cls.turret && this._weakFlag(u, 'bridge')) continue; // fire control gone: turret is dead weight
       if (cls.turret) {
         const gunGoal = target ? Math.atan2(target.y - u.y, target.x - u.x) : u.heading;
         u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * dt);
@@ -486,6 +546,7 @@
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
           ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId);
+      for (const w of u.weak) mix(w.type + w.hp.toFixed(2));
     }
     let live = 0;
     for (const p of this.projectiles) if (p.active) { live++; mix(p.x.toFixed(2) + ',' + p.y.toFixed(2)); }

@@ -21,6 +21,12 @@
   #speedBox input { width: 100%; }
   #speedBox .row { display: flex; gap: 6px; margin-top: 6px; }
   #speedBox .row button { flex: 1; margin: 0; padding: 6px 0; }
+  #camBar { position: absolute; top: 10px; right: 10px; z-index: 8; display: flex; gap: 4px;
+            background: rgba(16,20,29,.85); border: 1px solid #2e3a52; border-radius: 10px; padding: 5px; }
+  #camBar button { margin: 0; padding: 7px 11px; font-weight: 600; }
+  #camBar button.on { background: #3a4a6a; border-color: #6c86b8; color: #fff; }
+  @media (max-width: 700px) { #camBar { right: 62px; } }
+  .sect { margin: 14px 0 4px; color: #8fa3c8; }
   @media (max-width: 700px) {
     #panelToggle { display: block; }
     #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
@@ -46,6 +52,7 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <button id="panelToggle">⚙</button>
+    <div id="camBar"><button data-cam="fit">Fit</button><button data-cam="snap">Snap</button><button data-cam="bubble">Bubble</button></div>
     <button id="dodgeBtn">DODGE</button>
     <div id="speedBox">
       <label>Game speed <span id="speedVal">0.5×</span></label>
@@ -61,9 +68,16 @@
       DODGE (or Space) barrel-rolls the held ship: straight line, big energy cost, turn lockout after.<br><br>
       Guns are automatic: cones acquire first entrant, cooldown only ticks on a valid target, spread tightens with lock.
       One energy pool = health + ammo + boost. F: refocus. 1–5: grab bank. R: restart. N: new seed.
-      Game speed (bottom left) slows the whole battle down; P pauses.
+      Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
+      Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
+      <b>Snap</b> zooms to the ship you're flying (or last flew), <b>Bubble</b> keeps
+      the wide view and magnifies around that ship.<br><br>
+      Capitals have weak points (rings on the hull): bridge (nose) kills the turret,
+      engines (tail) cripple speed, vents (sides) bleed energy. Hits there do extra damage.
     </div>
     <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
+    <div class="sect">CAMERA</div>
+    <div id="camTun"></div>
     <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES <span style="color:#5b6880">(hover for tooltip)</span></div>
     <div id="tunables"></div>
   </div>
@@ -130,6 +144,59 @@ pauseBtn.addEventListener('click', () => setPaused(!paused));
 document.getElementById('speedBox').addEventListener('pointerdown', e => e.stopPropagation());
 setSpeed(gameSpeed);
 
+// ---- Camera: render-only, never touches the sim. Three modes, every number a slider. ----
+const CAM_TUN = {
+  fitMaxZoom: { value: 3,   min: 1,   max: 6,   step: 0.1, tip: 'Fit: closest the camera will zoom in (x the whole-arena view).' },
+  fitPadding: { value: 140, min: 20,  max: 400, step: 5,   tip: 'Fit: world-unit margin kept around your ships.' },
+  snapZoom:   { value: 3.5, min: 1,   max: 8,   step: 0.1, tip: 'Snap: zoom on the current ship (x the whole-arena view).' },
+  bubbleSize: { value: 120, min: 50,  max: 260, step: 5,   tip: 'Bubble: magnifier radius in screen pixels.' },
+  bubbleZoom: { value: 3,   min: 1.5, max: 8,   step: 0.1, tip: 'Bubble: magnification inside the bubble.' },
+  bubbleGrow: { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'Bubble: how fast it grows open / shrinks closed.' },
+  camSmooth:  { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'How quickly the camera glides to its target (higher = snappier).' },
+};
+const camCfg = {};
+for (const k in CAM_TUN) camCfg[k] = CAM_TUN[k].value;
+let camMode = 'fit';
+try {
+  const saved = JSON.parse(localStorage.getItem('rw02.cam') || '{}');
+  for (const k in CAM_TUN) if (typeof saved[k] === 'number') camCfg[k] = saved[k];
+  if (['fit', 'snap', 'bubble'].includes(saved.mode)) camMode = saved.mode;
+} catch (e) {}
+function saveCam() { try { localStorage.setItem('rw02.cam', JSON.stringify(Object.assign({ mode: camMode }, camCfg))); } catch (e) {} }
+const camTunDiv = document.getElementById('camTun');
+for (const key in CAM_TUN) {
+  const t = CAM_TUN[key];
+  const row = document.createElement('div');
+  row.className = 'tun';
+  row.innerHTML = '<label title="' + t.tip + '">' + key + '<span class="val" id="cv_' + key + '">' + camCfg[key] + '</span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + t.step + '" value="' + camCfg[key] + '">';
+  camTunDiv.appendChild(row);
+  row.querySelector('input').addEventListener('input', e => {
+    camCfg[key] = parseFloat(e.target.value);
+    document.getElementById('cv_' + key).textContent = camCfg[key];
+    saveCam();
+  });
+}
+const camButtons = document.querySelectorAll('#camBar button');
+function setCamMode(m) {
+  camMode = m;
+  camButtons.forEach(b => b.classList.toggle('on', b.dataset.cam === m));
+  saveCam();
+}
+camButtons.forEach(b => b.addEventListener('click', () => setCamMode(b.dataset.cam)));
+document.getElementById('camBar').addEventListener('pointerdown', e => e.stopPropagation());
+setCamMode(camMode);
+
+let lastFocus = -1; // the ship you flew most recently: Snap/Bubble keep watching it
+function focusUnit() {
+  if (sim.heldUnit >= 0) lastFocus = sim.heldUnit;
+  const f = lastFocus >= 0 ? sim.units[lastFocus] : null;
+  if (f && f.state === 'alive') return f;
+  for (const u of sim.units) if (u.team === PLAYER && u.state === 'alive') return u;
+  return null;
+}
+const camState = { cx: 0, cy: 0, s: 0, bubble: 0 }; // smoothed camera (world centre, scale, bubble openness)
+
 // ---- Pointer input: one path for mouse and touch. ----
 let pointer = { x: 0, y: 0, down: false, id: -1 };
 let cam = { scale: 1, ox: 0, oy: 0 };
@@ -173,6 +240,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
+  if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
 });
 window.addEventListener('keyup', e => {
   if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; sim.command({ type: 'release' }); }
@@ -195,7 +263,10 @@ function frame(now) {
       sim.command({ type: 'aim', angle: Math.atan2(w.y - u.y, w.x - u.x) });
     }
     sim.step();
-    for (const e of sim.events) if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
+    for (const e of sim.events) {
+      if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
+      if (e.type === 'weakDown') flashes.push({ x: e.x, y: e.y, r: 70, age: 0, big: true });
+    }
     if (sim.aliveCount(PLAYER) > 0 && sim.aliveCount(ENEMY) > 0) survivalTime += stepLen;
     acc -= stepLen;
   }
@@ -212,11 +283,75 @@ function render(dtReal) {
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const R = sim.T.arenaRadius;
-  cam.scale = Math.min(W, H) / (R * 2.15);
-  cam.ox = W / 2; cam.oy = H / 2;
+  const base = Math.min(W, H) / (R * 2.15); // whole-arena view
+
+  // Camera target for this mode.
+  const fu = focusUnit();
+  let tx = 0, ty = 0, ts = base;
+  if (camMode === 'snap' && fu) {
+    tx = fu.x; ty = fu.y; ts = base * camCfg.snapZoom;
+  } else {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+    for (const u of sim.units) {
+      if (u.team !== PLAYER || u.state === 'crystallized') continue;
+      x0 = Math.min(x0, u.x); y0 = Math.min(y0, u.y); x1 = Math.max(x1, u.x); y1 = Math.max(y1, u.y); n++;
+    }
+    if (n) {
+      const pad = camCfg.fitPadding;
+      tx = (x0 + x1) / 2; ty = (y0 + y1) / 2;
+      ts = Math.min(W / (x1 - x0 + pad * 2), H / (y1 - y0 + pad * 2));
+      ts = Math.max(base * 0.8, Math.min(base * camCfg.fitMaxZoom, ts));
+    }
+  }
+  const k = 1 - Math.exp(-dtReal * camCfg.camSmooth);
+  if (!camState.s) { camState.cx = tx; camState.cy = ty; camState.s = ts; }
+  camState.cx += (tx - camState.cx) * k;
+  camState.cy += (ty - camState.cy) * k;
+  camState.s += (ts - camState.s) * k;
+  cam.scale = camState.s;
+  cam.ox = W / 2 - camState.cx * cam.scale;
+  cam.oy = H / 2 - camState.cy * cam.scale;
+
+  // Age effects once per frame (both the main view and the bubble draw them).
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    flashes[i].age += dtReal;
+    if (flashes[i].age >= (flashes[i].big ? 0.6 : 0.35)) flashes.splice(i, 1);
+  }
 
   ctx.fillStyle = '#0b0e14';
   ctx.fillRect(0, 0, W, H);
+  drawWorld();
+
+  // Bubble: magnify around the current ship, drawn over the wide view.
+  const wantBubble = camMode === 'bubble' && fu ? 1 : 0;
+  camState.bubble += (wantBubble - camState.bubble) * (1 - Math.exp(-dtReal * camCfg.bubbleGrow));
+  if (camState.bubble > 0.02 && fu) {
+    const sx = cam.ox + fu.x * cam.scale, sy = cam.oy + fu.y * cam.scale;
+    const br = camCfg.bubbleSize * camState.bubble;
+    const main = { scale: cam.scale, ox: cam.ox, oy: cam.oy };
+    ctx.save();
+    ctx.beginPath(); ctx.arc(sx, sy, br, 0, 7); ctx.clip();
+    ctx.fillStyle = '#0d1119'; ctx.fillRect(sx - br, sy - br, br * 2, br * 2);
+    cam.scale = main.scale * camCfg.bubbleZoom;
+    cam.ox = sx - fu.x * cam.scale; cam.oy = sy - fu.y * cam.scale;
+    drawWorld();
+    cam.scale = main.scale; cam.ox = main.ox; cam.oy = main.oy;
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(sx, sy, br, 0, 7);
+    ctx.strokeStyle = 'rgba(160,190,240,0.7)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+
+  const mine = sim.aliveCount(PLAYER), foes = sim.aliveCount(ENEMY);
+  hud.innerHTML =
+    '<div class="big">' + mine + ' vs ' + foes + '</div>' +
+    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' +
+    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — tap to restart</div>' :
+     foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — tap to restart</div>' : '');
+}
+
+// Draws the whole world with the current `cam` transform.
+function drawWorld() {
+  const R = sim.T.arenaRadius;
   ctx.save();
   ctx.translate(cam.ox, cam.oy);
   ctx.scale(cam.scale, cam.scale);
@@ -291,6 +426,23 @@ function render(dtReal) {
       ctx.fillStyle = u.held ? '#ffffff' : TEAMCOL[u.team];
     }
     ctx.fill();
+    // Weak points ride the hull: ring = intact (colour = wear), dark X = knocked out.
+    if (u.state === 'alive') for (const w of u.weak) {
+      const wx = w.x * r, wy = w.y * r, wr = w.r * r;
+      ctx.beginPath(); ctx.arc(wx, wy, wr, 0, 7);
+      if (w.out) {
+        ctx.fillStyle = '#1a1010'; ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(wx - wr * 0.6, wy - wr * 0.6); ctx.lineTo(wx + wr * 0.6, wy + wr * 0.6);
+        ctx.moveTo(wx + wr * 0.6, wy - wr * 0.6); ctx.lineTo(wx - wr * 0.6, wy + wr * 0.6);
+        ctx.strokeStyle = '#e85a4a';
+      } else {
+        const f = w.hp / sim.T.weakHp;
+        ctx.strokeStyle = f > 0.6 ? '#ffd76a' : (f > 0.3 ? '#ff9a3c' : '#ff4a3c');
+      }
+      ctx.lineWidth = 2 / cam.scale;
+      ctx.stroke();
+    }
     ctx.restore();
 
     // Turret (capitals only): dome + barrel drawn at gunAngle, independent of hull.
@@ -320,15 +472,12 @@ function render(dtReal) {
     ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
   }
 
-  // Detonation flashes
-  for (let i = flashes.length - 1; i >= 0; i--) {
-    const f = flashes[i];
-    f.age += dtReal;
-    const t = f.age / 0.35;
-    if (t >= 1) { flashes.splice(i, 1); continue; }
+  // Detonation flashes (weak point knockouts are the big white ones)
+  for (const f of flashes) {
+    const t = f.age / (f.big ? 0.6 : 0.35);
     ctx.beginPath(); ctx.arc(f.x, f.y, f.r * t, 0, 7);
-    ctx.strokeStyle = 'rgba(255,190,120,' + (1 - t) * 0.7 + ')';
-    ctx.lineWidth = 2.5 / cam.scale;
+    ctx.strokeStyle = f.big ? 'rgba(255,255,255,' + (1 - t) + ')' : 'rgba(255,190,120,' + (1 - t) * 0.7 + ')';
+    ctx.lineWidth = (f.big ? 4 : 2.5) / cam.scale;
     ctx.stroke();
   }
 
@@ -345,13 +494,6 @@ function render(dtReal) {
     ctx.setLineDash([]);
   }
   ctx.restore();
-
-  const mine = sim.aliveCount(PLAYER), foes = sim.aliveCount(ENEMY);
-  hud.innerHTML =
-    '<div class="big">' + mine + ' vs ' + foes + '</div>' +
-    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' +
-    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — tap to restart</div>' :
-     foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — tap to restart</div>' : '');
 }
 
 requestAnimationFrame(frame);
