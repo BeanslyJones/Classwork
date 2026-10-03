@@ -59,6 +59,18 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
   tighter spread (zero at full lock), target leading (`leadMax`), and faster
   reloads (`fireRateBonus`). Fixed guns can bend a shot within their arc toward
   the led point; turrets slew onto it.
+- **Turning radius per class** (`turnRadius`, world units; `turnRadiusScale`
+  scales the whole fleet): interceptor 90, fighter 110, AAA 120, bomber and
+  torpedo 150, heavy 160, capital 200. Angular rate = current speed / radius,
+  and every source of turning (pilot, AI, crystal evasion, drift) is capped by
+  it — nothing snaps. A released ship keeps turning toward the direction you
+  set (faint dashed line) at its own rate; a dodge rolls along the current
+  heading. Crystal look-ahead grows with turn radius, and a close call
+  overrides the pilot/AI turn. Unflown ships keep at least `minSpeed` 50.
+- **AI reaction time** (`aiReactSec` 2.5s): each AI ship re-picks its heading
+  that often and turns toward it in between, i.e. it juggles too. Without it,
+  six always-steering AI ships beat one human pilot every time once turns
+  became slow.
 - **Time to kill** (one attacker, sustained fire, centre entry): ~2-4s on small
   ships, ~10s on a capital, ~5s for a torpedo bomber on a capital. Damage and
   energy pools are tuned to that; the `[time to kill]` test holds the ranges.
@@ -87,9 +99,10 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
 ## Gate
 
 **Does neglect visibly cost?** Headless proxy (6v6 with capitals and torpedo
-bombers, 10 battles x 90s): neglected team wins 0/10 (184 avg ship-seconds);
-a bot that flings its slowest ship nose-first at the nearest enemy wins 7/10
-(269). At 3-second kills a single battle is a coin flip, hence 10 seeds.
+bombers, 10 battles x 90s): neglected team wins 0/10 (177 avg ship-seconds,
+3.5 foes left); a bot that flings its slowest ship at the nearest enemy every
+1.5s wins 4/10 (342, 1.5 foes left). At 3-second kills a single battle is a
+coin flip, hence 10 seeds.
 With fixed guns an unflown ship rarely lines up a shot, so neglect now costs
 firepower as well as ships.
 

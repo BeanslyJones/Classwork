@@ -14,8 +14,9 @@
   const TUNABLES = {
     tickRate:        { value: 30,    min: 10,  max: 120,  tooltip: 'Fixed sim ticks per second.' },
     arenaRadius:     { value: 560,   min: 200, max: 2000, tooltip: 'Soft arena radius. No boundary death.' },
+    aiReactSec:      { value: 2.5,   min: 0,   max: 5,    tooltip: 'AI reaction time: each AI ship re-picks its heading this often and turns toward that in between — it juggles like a player instead of steering every ship every tick.' },
     edgeSteer:       { value: 2.2,   min: 0,   max: 10,   tooltip: 'Corrective turn (rad/s) past the soft edge.' },
-    minSpeed:        { value: 18,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
+    minSpeed:        { value: 50,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
     momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
     driftNoise:      { value: 1.4,   min: 0,   max: 8,    tooltip: 'Heading wobble (rad/s) at zero momentum.' },
     stallGraceSec:   { value: 2.5,   min: 0.5, max: 10,   tooltip: 'Seconds a stalled unit can still be saved.' },
@@ -25,9 +26,9 @@
     hazardRadiusMin: { value: 24,    min: 5,   max: 100,  tooltip: 'Smallest crystal radius.' },
     hazardRadiusMax: { value: 48,    min: 5,   max: 160,  tooltip: 'Largest crystal radius.' },
     unitRadius:      { value: 10,    min: 4,   max: 30,   tooltip: 'Unit collision radius (art scale decoupled).' },
-    avoidRange:      { value: 90,    min: 0,   max: 300,  tooltip: 'Crystal evasion range for unheld ships.' },
-    avoidSteer:      { value: 3.0,   min: 0,   max: 12,   tooltip: 'Max evasion turn (rad/s), scaled by momentum.' },
-    heldTurnRate:    { value: 6.0,   min: 1,   max: 20,   tooltip: 'Rad/s the held unit turns toward the aim angle.' },
+    avoidRange:      { value: 90,    min: 0,   max: 300,  tooltip: 'Crystal look-ahead for unheld ships, added on top of the ship\'s own turn radius (wide turners look further ahead).' },
+    avoidSteer:      { value: 1.0,   min: 0,   max: 1,    tooltip: 'Share of the hull\'s turn rate unheld ships spend evading crystals (scaled by momentum on human sides).' },
+    turnRadiusScale: { value: 1.0,   min: 0.3, max: 3,    tooltip: 'Multiplies every class turnRadius. Bigger = wider, lazier turns for the whole fleet.' },
     lockTimeFull:    { value: 1.6,   min: 0.2, max: 6,    tooltip: 'Seconds held in the arc to climb from the starting lock to its ceiling.' },
     lockSpreadMax:   { value: 0.35,  min: 0,   max: 1.5,  tooltip: 'Aim error (radians) at zero lock. Spread scales down with lock quality.' },
     lockEntryFloor:  { value: 0.35,  min: 0,   max: 1,    tooltip: 'Lock ceiling for a target that entered at the very edge of the arc. Dead-centre entry = 1.' },
@@ -56,25 +57,27 @@
   // ~3s on small ships (interceptor ~2s .. heavy ~3.5s), ~10s on a capital
   // (torpedo bomber ~5s). Re-measure with the TTK test if you change a row.
   // Unity port: one ScriptableObject per row; numbers become [Range] fields there.
+  // turnRadius: world units. Ships can never turn tighter than this — angular
+  // rate = current speed / turnRadius — so bigger, slower hulls swing wider.
   // turret: only capital ships carry a rotating turret. Everything else has
   // fixed forward guns — the cone points where the hull points, so to shoot
   // something you have to fly at it. gunTurn is only read when turret is true.
   // size: collision radius multiplier on unitRadius.
   const CLASSES = {
-    fighter:     { speed: 150, turnRate: 2.6, energyMax: 100, turret: false, gunTurn: 0, size: 1,
+    fighter:     { speed: 150, turnRadius: 110, energyMax: 100, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.65, coneRange: 230, cooldown: 0.50, shotCost: 2.0, damage: 16,  aoe: 26, projSpeed: 330 },
-    bomber:      { speed: 100, turnRate: 1.6, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+    bomber:      { speed: 100, turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.80, coneRange: 270, cooldown: 1.60, shotCost: 6.0, damage: 57.5, aoe: 72, projSpeed: 180 },
-    heavy:       { speed: 112, turnRate: 1.1, energyMax: 125, turret: false, gunTurn: 0, size: 1,
+    heavy:       { speed: 112, turnRadius: 160, energyMax: 125, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.45, coneRange: 320, cooldown: 0.80, shotCost: 4.0, damage: 41.5, aoe: 18, projSpeed: 430 },
-    interceptor: { speed: 215, turnRate: 3.6, energyMax: 58,  turret: false, gunTurn: 0, size: 1,
+    interceptor: { speed: 215, turnRadius: 90, energyMax: 58,  turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.70, coneRange: 180, cooldown: 0.35, shotCost: 1.5, damage: 10.5,  aoe: 16, projSpeed: 370 },
-    aaa:         { speed: 70,  turnRate: 1.0, energyMax: 105, turret: false, gunTurn: 0, size: 1,
+    aaa:         { speed: 70,  turnRadius: 120, energyMax: 105, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 1.40, coneRange: 210, cooldown: 0.30, shotCost: 1.2, damage: 9.2,  aoe: 36, projSpeed: 260 },
     // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
     // sidestep but a lumbering capital can't. vsCapital multiplies damage on
     // capitals; projTtl lets the slow torpedo actually reach its range.
-    torpedo:     { speed: 90,  turnRate: 1.2, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+    torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
                    coneHalf: 0.55, coneRange: 300, cooldown: 2.40, shotCost: 7.0, damage: 66, aoe: 28, projSpeed: 105,
                    vsCapital: 2.9, projTtl: 3.4 },
     // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
@@ -84,7 +87,7 @@
     //   bridge -> turret fire control offline   engine -> speed/turn crippled
     //   vent   -> hull bleeds energy (ventLeak)
     // Different capital types are just different rows with different layouts.
-    capital:     { speed: 45,  turnRate: 0.45, energyMax: 625, turret: true,  gunTurn: 1.8, size: 2.2,
+    capital:     { speed: 45,  turnRadius: 200, energyMax: 625, turret: true,  gunTurn: 1.8, size: 2.2,
                    coneHalf: 0.22, coneRange: 340, cooldown: 0.90, shotCost: 4.0, damage: 44, aoe: 30, projSpeed: 300,
                    weakPoints: [
                      { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
@@ -185,6 +188,7 @@
         heading: baseAng + Math.PI, // face across the arena
         gunAngle: baseAng + Math.PI,
         momentum: 1, stallTimer: 0, crystallizeTimer: 0,
+        goal: null, // heading a released ship is still turning toward (no snap turns)
         energy: cls.energyMax,
         targetId: -1, outOfConeTime: 0, cooldown: cls.cooldown,
         // Arc-entry lock: entryQ = how centred the target was when it entered
@@ -250,7 +254,7 @@
         if (this.held[team] < 0) continue;
         const u = this.units[this.held[team]];
         u.held = false;
-        u.heading = this.aim[team];
+        u.goal = this.aim[team]; // keeps turning toward it at its own rate after release
         u.momentum = 1;
         u.stallTimer = 0;
         this.events.push({ type: 'released', unit: this.held[team], team: team, tick: this.tick });
@@ -261,7 +265,7 @@
         if (u.energy <= this.T.dodgeCost) continue; // can't roll yourself to death
         u.energy -= this.T.dodgeCost;
         u.dodgeTimer = this.T.dodgeDurSec;
-        u.heading = this.aim[team]; // roll direction locked at trigger
+        u.goal = null; // rolls straight along its current heading — no snap
         this.events.push({ type: 'dodge', unit: u.id, tick: this.tick });
       } else if (cmd.type === 'refocus') {
         // Drop the current lock so the first NEW cone entrant takes priority.
@@ -412,20 +416,33 @@
         if (this._weakFlag(u, 'engine')) cripple = T.engineCripple;
       }
 
-      // --- Steering ---
+      // --- Steering. Every source of turning is capped by the hull's turn rate:
+      // current speed / turnRadius. No ship ever snaps to a new heading. ---
+      const curSpeed = (this.human[u.team] ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed) * cripple;
+      const maxTurn = curSpeed / (cls.turnRadius * T.turnRadiusScale) * (u.tier === 1 ? 2 : 1); // rad/s (Reduced tier steps half as often)
+      const heading0 = u.heading;
       if (u.dodgeTimer > 0) {
         // Barrel roll: dead straight, no steering of any kind.
         u.dodgeTimer -= dt;
         if (u.dodgeTimer <= 0) u.lockoutTimer = T.dodgeLockoutSec;
       } else if (u.held) {
-        if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], T.heldTurnRate * dt);
+        if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], maxTurn * dt);
       } else if (this.human[u.team]) {
         // Unpossessed ship on a human-flown side: the juggle clock runs.
         u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
+        if (u.goal !== null && u.lockoutTimer <= 0) {
+          u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
+          if (Math.abs(wrapAngle(u.goal - u.heading)) < 1e-3) u.goal = null;
+        }
         u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
       } else {
         // Opposition AI: same class table, seeks nearest player ship to gun range.
-        if (u.tier < 2) {
+        // It decides a heading only every aiReactSec (staggered per ship) and
+        // turns toward that stale goal in between.
+        const reactTicks = Math.max(1, Math.round(T.aiReactSec * T.tickRate));
+        const decide = (this.tick + u.id * 7) % reactTicks === 0 || u.goal === null;
+        if (u.goal !== null) u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
+        if (u.tier < 2 && decide) {
           let tgt = null, tgtD = Infinity;
           const huntCapitals = !!cls.vsCapital;
           for (const v of this.units) {
@@ -435,7 +452,7 @@
             if (d < tgtD) { tgtD = d; tgt = v; }
           }
           if (tgt) tgtD = Math.hypot(tgt.x - u.x, tgt.y - u.y);
-          if (tgt && (u.tier === 0 || (this.tick & 1) === 0)) {
+          if (tgt) {
             const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
             let want;
             if (cls.turret) {
@@ -446,24 +463,40 @@
               // close, swing back around for the next pass.
               want = tgtD > cls.coneRange * 0.35 ? toTgt : toTgt + Math.PI * 0.6;
             }
-            u.heading = turnToward(u.heading, want, cls.turnRate * cripple * dt * (u.tier === 1 ? 2 : 1));
+            u.goal = want;
           }
         }
       }
 
-      // Crystal evasion for everything unheld and not mid-roll.
+      // Crystal evasion for everything unheld and not mid-roll. Only crystals
+      // ahead matter, and a ship that turns wide has to start turning early:
+      // look-ahead = avoidRange + its turn radius. It veers to whichever side
+      // the crystal isn't on, using its own hull turn rate.
       if (!u.held && u.dodgeTimer <= 0 && T.avoidSteer > 0) {
-        let nearest = null, nearestGap = Infinity;
+        const look = T.avoidRange + cls.turnRadius * T.turnRadiusScale;
+        let nearest = null, nearestGap = Infinity, nearestRel = 0;
         for (const h of this.hazards) {
-          const gap = Math.hypot(u.x - h.x, u.y - h.y) - h.r;
-          if (gap < T.avoidRange && gap < nearestGap) { nearestGap = gap; nearest = h; }
+          const dx = h.x - u.x, dy = h.y - u.y;
+          const rel = wrapAngle(Math.atan2(dy, dx) - u.heading);
+          if (Math.abs(rel) > Math.PI / 2) continue; // behind us
+          const gap = Math.hypot(dx, dy) - h.r - T.unitRadius * cls.size;
+          if (gap < look && gap < nearestGap) { nearestGap = gap; nearest = h; nearestRel = rel; }
         }
         if (nearest) {
-          const away = Math.atan2(u.y - nearest.y, u.x - nearest.x);
-          const urgency = 1 - Math.max(0, nearestGap) / T.avoidRange;
+          const away = u.heading - (nearestRel >= 0 ? 1 : -1) * Math.PI / 2;
+          const urgency = Math.min(1, 1.5 * (1 - Math.max(0, nearestGap) / look));
           const str = this.human[u.team] ? u.momentum : 1;
-          u.heading = turnToward(u.heading, away, T.avoidSteer * str * urgency * dt);
+          // Close call: evasion overrides whatever the pilot/AI was turning toward.
+          const from = urgency > 0.6 ? heading0 : u.heading;
+          u.heading = turnToward(from, away, maxTurn * T.avoidSteer * str * urgency * dt);
         }
+      }
+
+      // Hull limit: whatever asked for the turn (pilot, AI, evasion, drift), the
+      // ship can't swing faster than its turn radius allows.
+      if (u.dodgeTimer <= 0) {
+        const d = wrapAngle(u.heading - heading0), lim = maxTurn * dt;
+        if (Math.abs(d) > lim) u.heading = heading0 + Math.sign(d) * lim;
       }
 
       // --- Stall (human-flown sides only — the AI opposition does not juggle) ---
@@ -486,7 +519,7 @@
 
       const distFromCenter = Math.hypot(u.x, u.y);
       if (distFromCenter > T.arenaRadius && u.dodgeTimer <= 0) {
-        u.heading = turnToward(u.heading, Math.atan2(-u.y, -u.x), T.edgeSteer * dt);
+        u.heading = turnToward(u.heading, Math.atan2(-u.y, -u.x), Math.min(T.edgeSteer, maxTurn) * dt);
       }
 
       for (const h of this.hazards) {
@@ -621,6 +654,7 @@
       r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
       STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
       r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
+      u.goal === null ? null : r3(u.goal),
     ]);
     const proj = [];
     for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
@@ -638,7 +672,7 @@
       if (!u) return;
       u.x = a[0]; u.y = a[1]; u.heading = a[2]; u.gunAngle = a[3]; u.momentum = a[4]; u.energy = a[5];
       u.state = CODE_STATE[a[6]]; u.held = !!a[7]; u.targetId = a[8]; u.lockQ = a[9]; u.lockCap = a[10];
-      u.entryQ = a[11]; u.crystallizeTimer = a[12];
+      u.entryQ = a[11]; u.crystallizeTimer = a[12]; u.goal = a[14] === undefined ? null : a[14];
       a[13].forEach((hp, k) => { if (u.weak[k]) { u.weak[k].out = hp < 0; u.weak[k].hp = Math.max(0, hp); } });
     });
     let k = 0;
@@ -659,6 +693,7 @@
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
           ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId + ',' + u.lockQ.toFixed(4));
       for (const w of u.weak) mix(w.type + w.hp.toFixed(2));
+      if (u.goal !== null) mix('g' + u.goal.toFixed(4));
     }
     let live = 0;
     for (const p of this.projectiles) if (p.active) { live++; mix(p.x.toFixed(2) + ',' + p.y.toFixed(2)); }

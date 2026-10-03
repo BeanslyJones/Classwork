@@ -102,10 +102,12 @@ function duel(roster, extra) {
   a.x = -150; a.y = 0; a.heading = 0; a.gunAngle = 0;
   b.x = 150; b.y = 0; b.heading = Math.PI; b.gunAngle = Math.PI;
   const spreads = [];
-  // Fixed guns: the pilot keeps the nose on the target (held + aimed each tick).
+  // Fixed guns: the pilot keeps the nose on the target (held + aimed each tick),
+  // and the target is kept dead ahead so turn radius doesn't break the lock.
   s.command({ type: 'grab', unit: a.id });
   for (let t = 0; t < 400; t++) {
-    s.command({ type: 'aim', angle: Math.atan2(b.y - a.y, b.x - a.x) });
+    s.command({ type: 'aim', angle: a.heading });
+    b.x = a.x + Math.cos(a.heading) * 150; b.y = a.y + Math.sin(a.heading) * 150;
     s.step();
     for (const e of s.events) if (e.type === 'fired' && e.unit === a.id) spreads.push(e.spread);
   }
@@ -239,6 +241,39 @@ function duel(roster, extra) {
   const torp = ttk('torpedo', 'capital');
   assert(torp < Math.min(...capT, ttk('heavy', 'capital')), 'torpedo bomber is the fastest capital killer (' + torp.toFixed(1) + 's)');
 }
+
+// --- 5g. Turn radius: no snap turns, bigger ships swing wider. ----------------
+{
+  console.log('\n[turn radius]');
+  // Release a ship with its aim 180 deg behind it: it must not snap round.
+  const s = duel([{ cls: 'fighter', team: PLAYER }]);
+  const u = s.units[0];
+  u.heading = 0;
+  s.command({ type: 'grab', unit: 0 });
+  s.command({ type: 'aim', angle: Math.PI });
+  s.command({ type: 'release' });
+  s.step();
+  assert(Math.abs(u.heading) < 0.2, 'release does not snap the heading (' + u.heading.toFixed(3) + ' rad after 1 tick)');
+  for (let i = 0; i < 90; i++) s.step(); // ~2.3s to come about, well before the arena edge
+  assert(Math.abs(Math.abs(wrap(u.heading)) - Math.PI) < 0.05, 'released ship keeps turning until it faces the set direction');
+  // Measure each class's real turning circle: hold it in a full turn.
+  function circle(cls) {
+    const s2 = duel([{ cls: cls, team: PLAYER }]);
+    const v = s2.units[0];
+    s2.command({ type: 'grab', unit: 0 });
+    let minX = Infinity, maxX = -Infinity;
+    for (let i = 0; i < TICK_RATE * 40; i++) {
+      s2.command({ type: 'aim', angle: v.heading + 1.5 }); // always ask for more turn than it can give
+      s2.step();
+      minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+    }
+    return (maxX - minX) / 2;
+  }
+  const rF = circle('fighter'), rI = circle('interceptor'), rH = circle('heavy'), rC = circle('capital');
+  assert(Math.abs(rF - CLASSES.fighter.turnRadius) < 10, 'fighter turns on its radius (' + rF.toFixed(0) + ' vs ' + CLASSES.fighter.turnRadius + ')');
+  assert(rI < rF && rF < rH && rH < rC, 'bigger ships turn wider: interceptor ' + rI.toFixed(0) + ' < fighter ' + rF.toFixed(0) + ' < heavy ' + rH.toFixed(0) + ' < capital ' + rC.toFixed(0));
+}
+function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {

@@ -87,11 +87,13 @@ function get(port, path) {
   await wait(150);
   assert(srv.sim.held[1] === redShip, "red cannot grab blue's ships");
 
-  // Aim + release steers the ship.
+  // Aim + release steers the ship (it turns toward the aim at its own rate).
   await post(port, b.hello.id, { type: 'aim', angle: 1.0 });
   await post(port, b.hello.id, { type: 'release' });
   await wait(150);
-  assert(srv.sim.held[1] === -1 && Math.abs(srv.sim.units[redShip].heading - 1.0) < 0.3, 'red release flings its ship along its aim');
+  const rs = srv.sim.units[redShip];
+  assert(srv.sim.held[1] === -1 && (rs.goal === null ? Math.abs(rs.heading - 1.0) < 0.05 : Math.abs(rs.goal - 1.0) < 1e-6),
+    'red release sends its ship turning toward its aim (no snap)');
 
   // Shared speed setting reaches everyone.
   await post(port, a.hello.id, { type: 'speed', value: 1.5 });

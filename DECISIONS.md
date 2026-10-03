@@ -126,3 +126,8 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   the arc toward the target.
 - **Time to kill:** about **3 seconds** for small ships, about **10 seconds** for
   a capital (one attacker, sustained fire). Torpedo bombers kill a capital in ~5s.
+
+## 14. Turning
+- Ships have a **turning radius**; bigger, slower ships turn wider.
+- **No snap turning.** Setting a direction makes the ship turn toward it at its
+  own turn speed, including after you let go.

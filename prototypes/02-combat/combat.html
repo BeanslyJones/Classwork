@@ -684,6 +684,19 @@ function drawWorld() {
     ctx.stroke();
   }
 
+  // Turn-to lines: your released ships still coming about to the direction you set.
+  for (const u of sim.units) {
+    if (u.team !== MINE() || u.state !== 'alive' || u.held || u.goal === null || !sim.human[u.team]) continue;
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(u.x + Math.cos(u.goal) * 70, u.y + Math.sin(u.goal) * 70);
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.setLineDash([3 / cam.scale, 5 / cam.scale]);
+    ctx.lineWidth = 1.5 / cam.scale;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Aim line
   if (sim.held[MINE()] >= 0) {
     const u = sim.units[sim.held[MINE()]];
