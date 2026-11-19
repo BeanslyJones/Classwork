@@ -320,7 +320,8 @@ cv.addEventListener('pointerdown', e => {
   else { selected = -1; pointer.down = false; pointer.id = -1; }
 });
 cv.addEventListener('pointermove', e => {
-  if (pointer.down && e.pointerId !== pointer.id) return;
+  // A key-held grab (1-6) has no owning pointer (id -1): any mouse/trackpad move steers it.
+  if (pointer.down && pointer.id !== -1 && e.pointerId !== pointer.id) return;
   const p = localXY(e);
   pointer.x = p.x; pointer.y = p.y;
 });
