@@ -299,6 +299,22 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   assert(idle.ai >= 10 && idle.ai < 30, 'idle player still faces a moving AI (' + idle.ai + ' re-aims/min, floor aiApmMin)');
 }
 
+// --- 5i. Dodge / refocus on a selected (not held) ship. ------------------------
+{
+  console.log('\n[selected-ship commands]');
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'fighter', team: ENEMY }]);
+  const [mine, theirs] = s.units;
+  const e0 = mine.energy, h0 = mine.heading;
+  s.command({ type: 'dodge', unit: mine.id });
+  s.step();
+  assert(mine.dodgeTimer > 0 && mine.energy < e0, 'dodge works on a selected ship without grabbing it');
+  assert(Math.abs(mine.heading - h0) < 1e-9, 'and gives no turn order');
+  const t0 = theirs.energy;
+  s.command({ type: 'dodge', unit: theirs.id });
+  s.step();
+  assert(theirs.dodgeTimer === 0 && theirs.energy === t0, "can't dodge the other side's ship");
+}
+
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');

@@ -105,7 +105,7 @@
       dead centre can reach a full lock, the edge stays weak. Holding it in the arc builds the lock, which
       tightens spread, leads the target and speeds up reloads. Lock line: green = centre entry, red = edge;
       brighter = stronger lock. Torpedo bombers (6) fire slow torpedoes that do 3× to capitals.
-      One energy pool = health + ammo + boost. F: refocus. 1–6: grab bank. R: restart. N: new seed.
+      One energy pool = health + ammo + boost. F: refocus. 1–6: select a ship (no order — drag a ship to steer it). R: restart. N: new seed.
       Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
       Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
       <b>Snap</b> zooms to the selected ship, <b>Bubble</b> keeps the wide view and
@@ -206,8 +206,8 @@ function restart(newSeed) {
 document.getElementById('btnRestart').addEventListener('click', () => restart(false));
 document.getElementById('btnSeed').addEventListener('click', () => restart(true));
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
-document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'dodge' }); });
-document.getElementById('focusBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'refocus' }); });
+document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'dodge', unit: selected >= 0 ? selected : undefined }); });
+document.getElementById('focusBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'refocus', unit: selected >= 0 ? selected : undefined }); });
 document.getElementById('portraitOk').addEventListener('click', () => {
   document.body.classList.add('portrait-ok');
   try { localStorage.setItem('rw02.portraitOk', '1'); } catch (e) {}
@@ -341,8 +341,7 @@ cv.addEventListener('pointerdown', e => {
   else { selected = -1; pointer.down = false; pointer.id = -1; }
 });
 cv.addEventListener('pointermove', e => {
-  // A key-held grab (1-6) has no owning pointer (id -1): any mouse/trackpad move steers it.
-  if (pointer.down && pointer.id !== -1 && e.pointerId !== pointer.id) return;
+  if (pointer.down && e.pointerId !== pointer.id) return;
   const p = localXY(e);
   pointer.x = p.x; pointer.y = p.y;
 });
@@ -359,21 +358,19 @@ window.addEventListener('keydown', e => {
   if (e.repeat) return;
   if (e.key >= '1' && e.key <= '9') {
     const id = parseInt(e.key, 10) - 1;
-    // Keys 1-6 pick your Nth ship (whichever side you fly).
+    // Keys 1-6 SELECT your Nth ship (camera, bubble, DODGE / REFOCUS target).
+    // Selecting never gives an order — only clicking and dragging a ship steers it.
     const mine = sim.units.filter(v => v.team === MINE());
     const pick = mine[id];
-    if (pick && myTeam >= 0) { act({ type: 'grab', unit: pick.id }); pointer.down = true; if (pick.state === 'alive') selected = pick.id; }
+    if (pick && pick.state === 'alive') selected = pick.id;
   }
   if (e.key === 'Escape') selected = -1;
-  if (e.key === ' ') { e.preventDefault(); act({ type: 'dodge' }); }
-  if (e.key === 'f' || e.key === 'F') act({ type: 'refocus' });
+  if (e.key === ' ') { e.preventDefault(); act({ type: 'dodge', unit: selected >= 0 ? selected : undefined }); }
+  if (e.key === 'f' || e.key === 'F') act({ type: 'refocus', unit: selected >= 0 ? selected : undefined });
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
-});
-window.addEventListener('keyup', e => {
-  if (e.key >= '1' && e.key <= '9' && pointer.down) { pointer.down = false; pointer.id = -1; flushAim(true); act({ type: 'release' }); }
 });
 
 // ---- Fixed-tick sim, decoupled render. ----

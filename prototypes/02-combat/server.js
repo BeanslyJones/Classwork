@@ -67,7 +67,7 @@ function createServer() {
     switch (cmd.type) {
       case 'grab': case 'aim': case 'release': case 'dodge': case 'refocus':
         if (c.seat < 0) return; // spectators can't fly
-        sim.command({ type: cmd.type, unit: cmd.unit | 0, angle: +cmd.angle, team: c.seat });
+        sim.command({ type: cmd.type, unit: Number.isInteger(cmd.unit) ? cmd.unit : undefined, angle: +cmd.angle, team: c.seat });
         return;
       case 'speed':
         if (+cmd.value >= 0.1 && +cmd.value <= 2) speed = +cmd.value;

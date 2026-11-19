@@ -270,7 +270,7 @@
         this.events.push({ type: 'released', unit: this.held[team], team: team, tick: this.tick });
         this.held[team] = -1;
       } else if (cmd.type === 'dodge') {
-        const u = this.held[team] >= 0 ? this.units[this.held[team]] : null;
+        const u = this._actor(cmd, team);
         if (!u || u.state !== ALIVE || u.dodgeTimer > 0 || u.lockoutTimer > 0) continue;
         if (u.energy <= this.T.dodgeCost) continue; // can't roll yourself to death
         u.energy -= this.T.dodgeCost;
@@ -280,7 +280,7 @@
         this.actions[team].push(this.tick);
       } else if (cmd.type === 'refocus') {
         // Drop the current lock so the first NEW cone entrant takes priority.
-        const u = this.held[team] >= 0 ? this.units[this.held[team]] : null;
+        const u = this._actor(cmd, team);
         if (!u) continue;
         u.targetId = -1; u.lockQ = 0; u.lockCap = 0; u.entryQ = 0; u.outOfConeTime = 0;
         u.enteredConeTick.fill(-1);
@@ -305,6 +305,14 @@
     const T = this.T, opp = 1 - team;
     const base = this.human[opp] ? this.apm(opp) : T.aiApmDefault;
     return Math.max(T.aiApmMin, base * T.aiApmMatch);
+  };
+
+  // Ship a dodge/refocus acts on: the one being held, else the one named in the
+  // command (a ship selected with a number key) if it's this side's and alive.
+  Sim.prototype._actor = function (cmd, team) {
+    if (this.held[team] >= 0) return this.units[this.held[team]];
+    const u = typeof cmd.unit === 'number' ? this.units[cmd.unit] : null;
+    return u && u.team === team && u.state === ALIVE ? u : null;
   };
 
   Sim.prototype._kill = function (u, cause) {
