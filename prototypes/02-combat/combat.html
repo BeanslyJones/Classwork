@@ -589,8 +589,10 @@ function render(dtReal) {
     else {
       const side = myTeam === 0 ? '<span style="color:#9fd0ff">BLUE</span>' : myTeam === 1 ? '<span style="color:#ff9f8a">RED</span>' : 'spectating';
       const red = netLobby.seats[1] ? 'human' : 'AI', blue = netLobby.seats[0] ? 'human' : 'AI';
-      netLine = '<div>LAN · you: ' + side + '</div><div>blue ' + blue + ' vs red ' + red + ' · ' + netLobby.players + ' online</div>';
+      netLine = '<div>LAN · you: ' + side + ' · server ' + location.host + '</div><div>blue ' + blue + ' vs red ' + red + ' · ' + netLobby.players + ' online</div>';
     }
+  } else {
+    netLine = '<div style="color:#8fa3c8">SINGLE PLAYER (not connected to a server)</div>';
   }
   // APM: yours, and what the AI is allowed (it matches you) when it flies the other side.
   let apmLine = '';
