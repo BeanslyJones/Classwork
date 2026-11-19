@@ -26,6 +26,19 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
 - Every class has its own hull silhouette (render-only `HULLS` table in the page).
 - **Verify:** `node test.js`.
 
+## Title, garage, sound
+
+The game is called **Amann Assault**. It opens on a title screen with an AI vs
+AI battle running behind it (BATTLE starts a fresh fight; ☰ MENU returns).
+**GARAGE** shows every ship class — placeholder names (THE JACK fighter,
+GRAYZER capital dropship, …), a silhouette with its firing arc and weak points,
+and stat bars read live from `CLASSES`, so they always match the battle.
+**Sound** (`sfx.js`) is synthesized with Web Audio — no audio files: a distinct
+gun per class, impacts, big blasts, ship explosions, weak-point clangs, dodge,
+lock-on, order/select/UI blips. Stereo from screen position, distance falloff,
+a short reverb and a compressor; voices are budgeted so rapid fire stays clean.
+Volume/mute on the title screen, M toggles mute.
+
 ## LAN multiplayer
 
 1. On any computer on your Wi-Fi (Node.js installed, nothing else needed):

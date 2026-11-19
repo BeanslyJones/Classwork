@@ -136,3 +136,9 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **The AI matches the player's APM**: it gets the same number of actions per
   minute, each one re-aiming one ship.
 - **More bullets, less damage each, slower bullets.**
+
+## 16. Name and ships
+- The game is called **Amann Assault**.
+- Ship names: **GRAYZER** (capital dropship), **THE JACK** (fighter). Other
+  names in the garage (NEEDLE, ANVIL, MANTA, BULWARK, HARPOON) are placeholders.
+- Title screen, garage with ship specs, and game sounds added.

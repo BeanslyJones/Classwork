@@ -395,7 +395,7 @@
 
   Sim.prototype._detonate = function (p) {
     p.active = false;
-    this.events.push({ type: 'detonation', x: p.x, y: p.y, aoe: p.aoe, tick: this.tick });
+    this.events.push({ type: 'detonation', x: p.x, y: p.y, aoe: p.aoe, big: p.damage >= 25 || p.vsCap > 1, tick: this.tick });
     for (const u of this.units) {
       if (u.state !== ALIVE) continue;
       if (u.team === p.team && !this.T.friendlyFire) continue; // FF is a separate toggle, off

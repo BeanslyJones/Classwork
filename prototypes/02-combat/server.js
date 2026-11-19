@@ -20,7 +20,9 @@ const { Sim, TUNABLES } = require('./sim.js');
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SNAP_HZ = 30;
 const ROOT = __dirname;
-const STATIC = { '/combat.html': 'text/html; charset=utf-8', '/sim.js': 'text/javascript; charset=utf-8' };
+const STATIC = { '/combat.html': 'text/html; charset=utf-8', '/sim.js': 'text/javascript; charset=utf-8', '/sfx.js': 'text/javascript; charset=utf-8' };
+// Events screens need for effects and sound (everything else stays server-side).
+const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked']);
 
 function createServer() {
   let seed = (Math.random() * 0xFFFFFFFF) >>> 0;
@@ -142,7 +144,7 @@ function createServer() {
     let n = 0;
     while (acc >= stepLen && n < 8) {
       sim.step();
-      for (const e of sim.events) if (e.type === 'detonation' || e.type === 'weakDown') pendingEvents.push(e);
+      for (const e of sim.events) if (FORWARD.has(e.type)) pendingEvents.push(e.type === 'fired' ? { type: 'fired', unit: e.unit } : e);
       acc -= stepLen; n++;
     }
     if (clients.size) { broadcast('snap', sim.snapshot(pendingEvents)); pendingEvents = []; }

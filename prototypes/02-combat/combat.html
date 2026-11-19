@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Radiant Warfront — 02 Combat</title>
+<title>Amann Assault</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
                touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
@@ -68,9 +68,77 @@
     #hud { left: max(10px, env(safe-area-inset-left)); }
     #hud .big { font-size: 17px; }
   }
+  /* ---- Title screen + garage ---- */
+  .overlay { position: fixed; inset: 0; z-index: 40; display: none; overflow-y: auto;
+             background: radial-gradient(ellipse at 50% 30%, rgba(30,44,74,.72), rgba(8,10,16,.93) 70%); }
+  .overlay.show { display: block; }
+  #title .wrap { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                 gap: 18px; padding: 24px 16px; box-sizing: border-box; text-align: center; }
+  #title h1 { margin: 0; font: 800 clamp(34px, 7vw, 76px)/1 system-ui, sans-serif; letter-spacing: .12em;
+              background: linear-gradient(180deg, #ffffff, #9fd0ff 55%, #ff9f8a); -webkit-background-clip: text;
+              background-clip: text; color: transparent; text-shadow: 0 0 40px rgba(159,208,255,.25); }
+  #title .sub { color: #8fa3c8; letter-spacing: .4em; font-size: 12px; margin-top: -8px; }
+  .menu { display: flex; flex-direction: column; gap: 10px; width: min(300px, 80vw); }
+  .menu button { margin: 0; padding: 14px 18px; font: 700 16px system-ui; letter-spacing: .15em; border-radius: 10px;
+                 background: rgba(27,36,52,.9); border: 1px solid #3a4a6a; }
+  .menu button.primary { background: linear-gradient(180deg, #2c5a8c, #1f3f66); border-color: #6c9ad0; color: #fff; }
+  .menu button:hover { border-color: #9fd0ff; }
+  .sound { display: flex; align-items: center; gap: 10px; color: #8fa3c8; font-size: 13px; width: min(300px, 80vw); }
+  .sound input { flex: 1; }
+  #title .tips { color: #5b6880; font-size: 12px; max-width: 520px; line-height: 1.6; }
+  #garage .wrap { max-width: 1100px; margin: 0 auto; padding: 18px 16px 40px; }
+  #garage header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  #garage h2 { margin: 0; letter-spacing: .25em; font-size: 20px; color: #cdd6e4; }
+  #garage .note { color: #5b6880; font-size: 11px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .card { background: rgba(16,20,29,.92); border: 1px solid #263248; border-radius: 12px; padding: 12px; }
+  .card canvas { width: 100%; height: 110px; display: block; background: radial-gradient(circle, #16203a, #0d1119 70%); border-radius: 8px; cursor: default; }
+  .card h3 { margin: 10px 0 0; font-size: 18px; letter-spacing: .08em; }
+  .card .role { color: #8fa3c8; font-size: 12px; margin-bottom: 8px; }
+  .card .blurb { color: #9aa6ba; font-size: 12px; margin: 6px 0 8px; min-height: 32px; }
+  .stat { display: grid; grid-template-columns: 78px 1fr 64px; align-items: center; gap: 6px; font-size: 11px; margin: 3px 0; }
+  .stat .bar { height: 6px; background: #1c2536; border-radius: 3px; overflow: hidden; }
+  .stat .bar i { display: block; height: 100%; background: linear-gradient(90deg, #4f7fc0, #9fd0ff); }
+  .stat .v { text-align: right; color: #cdd6e4; font-variant-numeric: tabular-nums; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .tags span { font-size: 10px; padding: 2px 6px; border-radius: 9px; background: #23304a; color: #cdd6e4; }
+  @media (max-height: 500px) {
+    #title .wrap { gap: 10px; padding: 12px 16px; }
+    #title h1 { font-size: 40px; }
+    .menu button { padding: 10px 14px; font-size: 14px; }
+    #title .tips { font-size: 11px; }
+  }
+  #menuBtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 8; font-weight: 700;
+             letter-spacing: .12em; padding: 7px 14px; border-radius: 8px; background: rgba(16,20,29,.85); }
 </style>
 </head>
 <body>
+<div id="title" class="overlay show">
+  <div class="wrap">
+    <div>
+      <h1>AMANN<br>ASSAULT</h1>
+    </div>
+    <div class="sub">COMBAT PROTOTYPE · 02</div>
+    <div class="menu">
+      <button id="btnPlay" class="primary">BATTLE</button>
+      <button id="btnGarage">GARAGE</button>
+    </div>
+    <div class="sound">🔊 <input type="range" id="volIn" min="0" max="1" step="0.05"> <button id="muteBtn">Mute</button></div>
+    <div class="tips">Select a ship (click it or 1–6), click the map to send it · drag a ship to steer ·
+      Space dodge · F refocus · C camera · M mute</div>
+  </div>
+</div>
+<div id="garage" class="overlay">
+  <div class="wrap">
+    <header>
+      <h2>GARAGE</h2>
+      <button id="garageBack">◀ BACK</button>
+    </header>
+    <div class="note">Names, roles and numbers are prototype placeholders. Stats come live from the game's class table,
+      so they always match what's in the battle. Firepower = damage per second at base fire rate.</div>
+    <div class="cards" id="cards" style="margin-top:12px"></div>
+  </div>
+</div>
 <div id="rotate">
   <div class="phone"></div>
   <div style="font-size:17px;font-weight:600">Turn your phone sideways</div>
@@ -82,6 +150,7 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <button id="panelToggle">⚙</button>
+    <button id="menuBtn">☰ MENU</button>
     <div id="camBar">
       <div class="btns"><button data-cam="fit">Fit</button><button data-cam="snap">Snap</button><button data-cam="bubble">Bubble</button></div>
       <div id="camZoom"><label><span id="camZoomName">Zoom</span><span id="camZoomVal"></span></label>
@@ -96,7 +165,7 @@
     </div>
   </div>
   <div id="panel">
-    <h1>02 · COMBAT</h1>
+    <h1>AMANN ASSAULT · COMBAT</h1>
     <div class="hint">
       Blue = yours, red = opposition (same class table). Only capitals (big ships) have
       turrets; every other ship's guns fire straight ahead, so aim by pointing the ship. Press near a blue ship to grab, drag to aim, lift to fling.
@@ -127,6 +196,7 @@
   </div>
 </div>
 <script src="sim.js"></script>
+<script src="sfx.js"></script>
 <script>
 // Show any script error on screen (some browsers hide them), so a broken page
 // says why instead of just showing an empty arena.
@@ -160,6 +230,7 @@ let sim = new Sim(seed, overrides);
 // stops simulating, sends its commands to the server and draws the snapshots
 // it streams back. Opened directly, it's the single-player prototype. ----
 const NET = new URLSearchParams(location.search).has('net');
+const titleEl = document.getElementById('title'), garageEl = document.getElementById('garage');
 if (NET) document.body.classList.add('net');
 let myTeam = 0;         // the side this screen flies (net: assigned by the server; -1 = spectating)
 let netId = null, netLobby = null;
@@ -342,14 +413,14 @@ cv.addEventListener('pointerdown', e => {
   if (bestU && bestD <= PICK_PX && myTeam >= 0) {
     // On a ship: grab it (drag to steer). Tapping the already-selected ship deselects it.
     pointer.wasSelected = selected === bestU.id;
-    act({ type: 'grab', unit: bestU.id }); selected = bestU.id;
+    act({ type: 'grab', unit: bestU.id }); selected = bestU.id; SFX.select();
   } else {
     // Empty space: order the selected ship to turn toward this point.
     pointer.down = false; pointer.id = -1;
     const s = selected >= 0 ? sim.units[selected] : null;
     if (s && s.state === 'alive' && myTeam >= 0) {
       act({ type: 'order', unit: s.id, angle: Math.atan2(w.y - s.y, w.x - s.x) });
-      orderMarks.push({ x: w.x, y: w.y, age: 0 });
+      orderMarks.push({ x: w.x, y: w.y, age: 0 }); SFX.order();
     }
   }
 });
@@ -372,13 +443,19 @@ cv.addEventListener('pointercancel', endPointer);
 
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
+  // Menus up: only Enter (start) and M (mute) do anything.
+  if (titleEl.classList.contains('show') || garageEl.classList.contains('show')) {
+    if (e.key === 'Enter' && titleEl.classList.contains('show')) startBattle();
+    if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
+    return;
+  }
   if (e.key >= '1' && e.key <= '9') {
     const id = parseInt(e.key, 10) - 1;
     // Keys 1-6 SELECT your Nth ship (camera, bubble, DODGE / REFOCUS target).
     // Selecting never gives an order — only clicking and dragging a ship steers it.
     const mine = sim.units.filter(v => v.team === MINE());
     const pick = mine[id];
-    if (pick && pick.state === 'alive') selected = pick.id;
+    if (pick && pick.state === 'alive') { selected = pick.id; SFX.select(); }
   }
   if (e.key === 'Escape') selected = -1;
   if (e.key === ' ') { e.preventDefault(); act({ type: 'dodge', unit: selected >= 0 ? selected : undefined }); }
@@ -387,6 +464,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
+  if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
 });
 
 // ---- Fixed-tick sim, decoupled render. ----
@@ -394,10 +472,36 @@ let acc = 0, last = performance.now();
 let survivalTime = 0;
 const flashes = []; // detonation ring effects (render-only, never touches sim state)
 
+// Where a world point sits for the ears: stereo pan from screen x, volume
+// falling off with distance from the middle of the screen (off-screen = faint).
+function earAt(x, y) {
+  const W = cv.clientWidth || 1, H = cv.clientHeight || 1;
+  const sx = cam.ox + x * cam.scale, sy = cam.oy + y * cam.scale;
+  const d = Math.hypot(sx - W / 2, sy - H / 2) / (0.5 * Math.hypot(W, H));
+  const v = Math.max(0, Math.min(1, 1.15 - d));
+  return { pan: (sx / W) * 2 - 1, vol: v * v };
+}
 function pushFlashes(events) {
   for (const e of events) {
-    if (e.type === 'detonation') flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
-    if (e.type === 'weakDown') flashes.push({ x: e.x, y: e.y, r: 70, age: 0, big: true });
+    if (e.type === 'detonation') {
+      flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
+      const a = earAt(e.x, e.y); SFX.impact(!!e.big, a.pan, a.vol);
+    } else if (e.type === 'weakDown') {
+      flashes.push({ x: e.x, y: e.y, r: 70, age: 0, big: true });
+      const a = earAt(e.x, e.y); SFX.weakDown(a.pan, a.vol);
+    } else if (e.type === 'fired') {
+      const u = sim.units[e.unit]; if (!u) continue;
+      const a = earAt(u.x, u.y); SFX.shot(u.cls, a.pan, a.vol);
+    } else if (e.type === 'crystallizing') {
+      const u = sim.units[e.unit]; if (!u) continue;
+      const a = earAt(u.x, u.y); SFX.explosion(CLASSES[u.cls].size, a.pan, Math.max(a.vol, 0.15));
+    } else if (e.type === 'dodge') {
+      const u = sim.units[e.unit]; if (!u) continue;
+      if (u.team === MINE()) SFX.dodge(earAt(u.x, u.y).pan);
+    } else if (e.type === 'locked') {
+      const u = sim.units[e.unit];
+      if (u && u.team === MINE() && (u.held || u.id === selected)) SFX.lock(e.entryQ || 0);
+    }
   }
 }
 // Aim while dragging: every tick offline; ~20x/s over the network.
@@ -492,13 +596,14 @@ const HULLS = {
   torpedo:     [[0.75, 0], [0.85, 0.16], [1.3, 0.22], [1.3, 0.55], [0.6, 0.6], [-0.2, 0.92], [-0.9, 0.82], [-0.7, 0.3], [-0.9, 0]],
   capital:     [[1.3, 0], [1.1, 0.35], [0.5, 0.45], [0.3, 0.7], [-0.3, 0.7], [-0.5, 0.55], [-1.0, 0.55], [-1.1, 0.3], [-1.0, 0]],
 };
-function hullPath(clsName, r) {
+function hullPath(clsName, r, c) {
+  c = c || ctx;
   const half = HULLS[clsName] || HULLS.fighter;
-  ctx.beginPath();
-  ctx.moveTo(half[0][0] * r, half[0][1] * r);
-  for (let i = 1; i < half.length; i++) ctx.lineTo(half[i][0] * r, half[i][1] * r);
-  for (let i = half.length - 1; i >= 0; i--) if (half[i][1] !== 0 || i === 0) ctx.lineTo(half[i][0] * r, -half[i][1] * r);
-  ctx.closePath();
+  c.beginPath();
+  c.moveTo(half[0][0] * r, half[0][1] * r);
+  for (let i = 1; i < half.length; i++) c.lineTo(half[i][0] * r, half[i][1] * r);
+  for (let i = half.length - 1; i >= 0; i--) if (half[i][1] !== 0 || i === 0) c.lineTo(half[i][0] * r, -half[i][1] * r);
+  c.closePath();
 }
 function render(dtReal) {
   const W = cv.clientWidth, H = cv.clientHeight;
@@ -822,6 +927,120 @@ function drawWorld() {
   }
   ctx.restore();
 }
+
+// ---- Title screen, garage, sound settings ----
+// Placeholder names/roles — the numbers below come live from CLASSES.
+const SHIP_INFO = {
+  fighter:     { name: 'THE JACK', role: 'Fighter',          blurb: 'Jack of all trades. Light blaster, quick to bring around.' },
+  interceptor: { name: 'NEEDLE',   role: 'Interceptor',      blurb: 'Fastest hull and tightest turn. Fragile — strike and leave.' },
+  heavy:       { name: 'ANVIL',    role: 'Heavy gunship',    blurb: 'Long-range autocannon. Precise enough to pick off weak points.' },
+  bomber:      { name: 'MANTA',    role: 'Bomber',           blurb: 'Slow bombs with a huge blast. Punishes anything that clumps.' },
+  aaa:         { name: 'BULWARK',  role: 'Flak platform',    blurb: 'Widest firing arc and rapid flak. Slow — let them come to it.' },
+  torpedo:     { name: 'HARPOON',  role: 'Torpedo bomber',   blurb: 'Slow torpedoes that wreck capitals. Small ships can dodge them.' },
+  capital:     { name: 'GRAYZER',  role: 'Capital dropship', blurb: 'Your dropship. The only turret in the fleet; guard its weak points.' },
+};
+const GARAGE_ORDER = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'capital'];
+let garageAnim = null;
+
+function shipStats(k) {
+  const c = CLASSES[k];
+  return {
+    hull: c.energyMax, speed: c.speed, turn: c.turnRadius, dps: c.damage / c.cooldown,
+    rate: 1 / c.cooldown, range: c.coneRange, arc: Math.round(c.coneHalf * 180 / Math.PI), bullet: c.projSpeed,
+  };
+}
+function buildGarage() {
+  const all = GARAGE_ORDER.map(shipStats);
+  const max = key => Math.max(...all.map(s => s[key]));
+  const minTurn = Math.min(...all.map(s => s.turn));
+  const rows = [
+    ['Hull', s => s.hull / max('hull'), s => Math.round(s.hull)],
+    ['Speed', s => s.speed / max('speed'), s => Math.round(s.speed)],
+    ['Agility', s => minTurn / s.turn, s => 'r ' + s.turn],
+    ['Firepower', s => s.dps / max('dps'), s => Math.round(s.dps) + '/s'],
+    ['Fire rate', s => s.rate / max('rate'), s => s.rate.toFixed(1) + '/s'],
+    ['Range', s => s.range / max('range'), s => Math.round(s.range)],
+    ['Arc', s => s.arc / max('arc'), s => '±' + s.arc + '°'],
+    ['Shot speed', s => s.bullet / max('bullet'), s => Math.round(s.bullet)],
+  ];
+  const cards = document.getElementById('cards');
+  cards.innerHTML = '';
+  GARAGE_ORDER.forEach((k, i) => {
+    const c = CLASSES[k], info = SHIP_INFO[k], st = all[i];
+    const tags = [];
+    if (c.turret) tags.push('Turret');
+    else tags.push('Fixed forward guns');
+    if (c.vsCapital) tags.push(c.vsCapital + '× vs capitals');
+    if (c.weakPoints) tags.push(c.weakPoints.length + ' weak points');
+    if (c.aoe >= 60) tags.push('Big blast');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = '<canvas width="480" height="220" data-k="' + k + '"></canvas>' +
+      '<h3>' + info.name + '</h3><div class="role">' + info.role + '</div>' +
+      '<div class="blurb">' + info.blurb + '</div>' +
+      rows.map(r => '<div class="stat"><span>' + r[0] + '</span><span class="bar"><i style="width:' +
+        Math.round(Math.max(0.04, Math.min(1, r[1](st))) * 100) + '%"></i></span><span class="v">' + r[2](st) + '</span></div>').join('') +
+      '<div class="tags">' + tags.map(t => '<span>' + t + '</span>').join('') + '</div>';
+    cards.appendChild(card);
+  });
+}
+function drawGarage(t) {
+  for (const cvs of document.querySelectorAll('#cards canvas')) {
+    const k = cvs.dataset.k, g = cvs.getContext('2d'), c = CLASSES[k];
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, cvs.width, cvs.height);
+    g.translate(cvs.width / 2, cvs.height / 2);
+    // firing arc
+    g.save(); g.rotate(-Math.PI / 2 + Math.sin(t / 1400) * 0.25);
+    const r = k === 'capital' ? 52 : 34;
+    g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 100, -c.coneHalf, c.coneHalf); g.closePath();
+    g.fillStyle = 'rgba(120,170,255,0.10)'; g.fill();
+    hullPath(k, r, g);
+    g.fillStyle = '#9fd0ff'; g.fill();
+    g.strokeStyle = '#e4f2ff'; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
+    if (c.weakPoints) for (const w of c.weakPoints) {
+      g.beginPath(); g.arc(w.x * r, w.y * r, w.r * r, 0, 7);
+      g.strokeStyle = '#ffd76a'; g.lineWidth = 2; g.stroke();
+    }
+    if (c.turret) { g.beginPath(); g.arc(0, 0, r * 0.38, 0, 7); g.fillStyle = '#0b0e14'; g.fill(); g.strokeStyle = '#9fd0ff'; g.stroke(); }
+    g.restore();
+  }
+  garageAnim = requestAnimationFrame(drawGarage);
+}
+function showTitle() {
+  titleEl.classList.add('show'); garageEl.classList.remove('show');
+  if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; }
+  // Attract mode offline: both sides AI while the menu is up.
+  if (!NET) { sim.setHuman(0, false); selected = -1; }
+}
+function hideOverlays() { titleEl.classList.remove('show'); garageEl.classList.remove('show'); if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; } }
+function startBattle() {
+  SFX.unlock(); SFX.ui();
+  hideOverlays();
+  if (!NET) { restart(true); setPaused(false); }
+  SFX.sting();
+}
+function openGarage() {
+  SFX.unlock(); SFX.ui();
+  titleEl.classList.remove('show'); garageEl.classList.add('show');
+  buildGarage();
+  if (!garageAnim) garageAnim = requestAnimationFrame(drawGarage);
+}
+const volIn = document.getElementById('volIn'), muteBtn = document.getElementById('muteBtn');
+function syncSound() { volIn.value = SFX.volume; muteBtn.textContent = SFX.muted ? 'Unmute' : 'Mute'; }
+volIn.addEventListener('input', e => { SFX.unlock(); SFX.setVolume(parseFloat(e.target.value)); });
+volIn.addEventListener('change', () => SFX.ui());
+muteBtn.addEventListener('click', () => { SFX.unlock(); SFX.setMuted(!SFX.muted); syncSound(); SFX.ui(); });
+syncSound();
+document.getElementById('btnPlay').textContent = NET ? 'JOIN BATTLE' : 'BATTLE';
+document.getElementById('btnPlay').addEventListener('click', startBattle);
+document.getElementById('btnGarage').addEventListener('click', openGarage);
+document.getElementById('garageBack').addEventListener('click', () => { SFX.ui(); showTitle(); });
+document.getElementById('menuBtn').addEventListener('click', e => { e.stopPropagation(); SFX.ui(); showTitle(); });
+document.getElementById('menuBtn').addEventListener('pointerdown', e => e.stopPropagation());
+// Browsers start audio muted until the first touch/click/key anywhere.
+['pointerdown', 'keydown'].forEach(t => window.addEventListener(t, () => SFX.unlock(), { once: true }));
+showTitle();
 
 requestAnimationFrame(frame);
 </script>
