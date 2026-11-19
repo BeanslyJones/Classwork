@@ -128,7 +128,28 @@
 </div>
 <script src="sim.js"></script>
 <script>
+// Show any script error on screen (some browsers hide them), so a broken page
+// says why instead of just showing an empty arena.
+(function () {
+  function show(msg) {
+    var box = document.getElementById('errBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'errBox';
+      box.style.cssText = 'position:fixed;left:10px;right:10px;bottom:10px;z-index:99;background:#3a1218;color:#ffd6d6;' +
+        'border:1px solid #e85a4a;border-radius:8px;padding:10px;font:12px/1.4 monospace;white-space:pre-wrap;max-height:40%;overflow:auto';
+      document.body.appendChild(box);
+    }
+    box.textContent += (box.textContent ? '\n' : 'Something broke — send this to Claude:\n') + msg;
+  }
+  window.addEventListener('error', function (e) { show((e.message || 'error') + (e.lineno ? ' (line ' + e.lineno + ')' : '') + ' · ' + navigator.userAgent); });
+  window.addEventListener('unhandledrejection', function (e) { show('promise: ' + (e.reason && e.reason.message || e.reason)); });
+  window.__showErr = show;
+})();
+</script>
+<script>
 'use strict';
+if (typeof CombatSim === 'undefined') window.__showErr('sim.js did not load (CombatSim missing)');
 const { Sim, TUNABLES, CLASSES, mulberry32 } = CombatSim;
 
 let seed = 4242;
@@ -425,6 +446,14 @@ if (NET) {
     survivalTime = snap.tick / sim.T.tickRate;
   });
   es.onerror = () => { netLobby = null; };
+  // Watchdog: if the live stream never delivers game data, say so on screen.
+  let snaps = 0;
+  es.addEventListener('snap', () => { snaps++; });
+  setTimeout(() => {
+    if (!snaps) window.__showErr('Connected page, but no live game data after 5s (stream ' +
+      ['connecting', 'open', 'closed'][es.readyState] + ', hello ' + (netId ? 'received' : 'missing') +
+      '). Antivirus / web-filter software can block this stream. ' + navigator.userAgent);
+  }, 5000);
 }
 function applyLobby(l) {
   netLobby = l;
