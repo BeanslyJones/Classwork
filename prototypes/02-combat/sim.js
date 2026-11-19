@@ -47,7 +47,10 @@
     dodgeLockoutSec: { value: 0.8,   min: 0,   max: 3,    tooltip: 'Turn lockout after the roll — readable and interceptable.' },
     projTtlSec:      { value: 2.2,   min: 0.5, max: 6,    tooltip: 'Projectile lifetime; flak detonates at end of life.' },
     weakCritMult:    { value: 2.5,   min: 1,   max: 6,    tooltip: 'Damage multiplier when a blast lands on a capital weak point.' },
-    weakHp:          { value: 120,    min: 5,   max: 300,  tooltip: 'Damage a weak point absorbs before it is knocked out.' },
+    weakHp:          { value: 300,   min: 5,   max: 1000, tooltip: 'Damage a weak point absorbs before it is knocked out.' },
+    bridgeTurn:      { value: 0.4,   min: 0,   max: 1,    tooltip: 'Bridge knocked out: turret traverse speed multiplier (fire control damaged, not dead).' },
+    bridgeLockCap:   { value: 0.3,   min: 0,   max: 1,    tooltip: 'Bridge knocked out: the turret\'s lock can climb no higher than this (sloppy aim).' },
+    spawnDist:       { value: 330,   min: 100, max: 1000, tooltip: 'How far from the centre each team starts. Further = the fight builds up instead of opening point-blank. Reset to apply.' },
     ventLeak:        { value: 3,     min: 0,   max: 20,   tooltip: 'Energy/sec a capital bleeds per breached reactor vent.' },
     engineCripple:   { value: 0.5,   min: 0.1, max: 1,    tooltip: 'Speed and turn multiplier once a capital loses its engines.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
@@ -87,11 +90,12 @@
     // weakPoints: spots on the hull in hull-local units of the ship's radius
     // (+x = nose). A blast landing on one does weakCritMult damage and wears
     // it down; knocked out, it costs the ship something:
-    //   bridge -> turret fire control offline   engine -> speed/turn crippled
+    //   bridge -> turret fire control damaged (slow traverse, sloppy lock)
+    //   engine -> speed/turn crippled
     //   vent   -> hull bleeds energy (ventLeak)
     // Different capital types are just different rows with different layouts.
-    capital:     { speed: 45,  turnRadius: 200, energyMax: 678, turret: true,  gunTurn: 1.8, size: 2.2,
-                   coneHalf: 0.22, coneRange: 340, cooldown: 0.3, shotCost: 1.33, damage: 16.6, aoe: 30, projSpeed: 180, projTtl: 2.46,
+    capital:     { speed: 45,  turnRadius: 200, energyMax: 678, turret: true,  gunTurn: 3.0, size: 2.2,
+                   coneHalf: 0.3, coneRange: 400, cooldown: 0.3, shotCost: 1.33, damage: 16.6, aoe: 30, projSpeed: 180, projTtl: 2.9,
                    weakPoints: [
                      { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
                      { type: 'engine', x: -1.0,  y: 0,     r: 0.45 },
@@ -192,7 +196,7 @@
       if (!cls) throw new Error('unknown class: ' + r.cls);
       this.units.push({
         id: i, cls: r.cls, team: r.team,
-        x: Math.cos(ang) * 150, y: Math.sin(ang) * 150,
+        x: Math.cos(ang) * this.T.spawnDist, y: Math.sin(ang) * this.T.spawnDist,
         heading: baseAng + Math.PI, // face across the arena
         gunAngle: baseAng + Math.PI,
         momentum: 1, stallTimer: 0, crystallizeTimer: 0,
@@ -642,10 +646,13 @@
 
       // Turret (capitals only) rotates independently of the hull: toward target,
       // else settles on heading. Fixed guns always point where the hull points.
-      if (cls.turret && this._weakFlag(u, 'bridge')) continue; // fire control gone: turret is dead weight
+      // Bridge knocked out: fire control is damaged, not gone — the turret
+      // still fights, just slower to traverse and with a capped lock.
+      const bridgeOut = cls.turret && this._weakFlag(u, 'bridge');
+      if (bridgeOut) u.lockCap = Math.min(u.lockCap, T.bridgeLockCap);
       if (cls.turret) {
         const gunGoal = target ? aimAngle : u.heading;
-        u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * dt);
+        u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * (bridgeOut ? T.bridgeTurn : 1) * dt);
       } else {
         u.gunAngle = u.heading;
       }

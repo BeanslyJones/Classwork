@@ -119,7 +119,8 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
   turret (`gunTurn`) onto it; they fire once it's in the cone.
 - **Capital weak points** ride the hull (`weakPoints` per class row, so each
   capital type can have its own layout). Blasts on one do `weakCritMult` damage
-  and wear it down; knocked out: bridge -> turret offline, engine -> speed/turn
+  and wear it down; knocked out: bridge -> turret damaged (traverse x
+  `bridgeTurn`, lock capped at `bridgeLockCap`; dome turns orange), engine -> speed/turn
   x `engineCripple`, vent -> hull bleeds `ventLeak`/s. Placeholder layout: bridge
   at the nose, engine at the tail, a vent on each side.
 - Momentum decay (`momentumDrain`, the juggle clock) halved to 0.0275/s.

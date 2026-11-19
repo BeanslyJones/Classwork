@@ -280,17 +280,19 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   console.log('\n[AI matches player APM]');
   function aiActions(grabEveryTicks) {
     const s = new Sim(SEED, { hazardCount: 0 });
-    let aiReaims = 0;
+    // Compare like with like: both sides' actions over the last 30s, per minute.
+    let aiReaims = 0, playerActs = 0;
     const mine = s.units.filter(u => u.team === PLAYER);
-    for (let t = 0; t < TICK_RATE * 60; t++) {
+    const T = TICK_RATE * 60, from = T - TICK_RATE * 30;
+    for (let t = 0; t < T; t++) {
       if (grabEveryTicks && t % grabEveryTicks === 0) {
         const u = mine[(t / grabEveryTicks) % mine.length];
-        if (u.state === 'alive') { s.command({ type: 'grab', unit: u.id }); s.command({ type: 'release' }); }
+        if (u.state === 'alive') { s.command({ type: 'grab', unit: u.id }); s.command({ type: 'release' }); if (t >= from) playerActs++; }
       }
       s.step();
-      if (s.aiPick[ENEMY] >= 0) aiReaims++;
+      if (t >= from && s.aiPick[ENEMY] >= 0) aiReaims++;
     }
-    return { ai: aiReaims, player: s.apm(PLAYER) };
+    return { ai: aiReaims * 2, player: playerActs * 2 };
   }
   const slow = aiActions(TICK_RATE * 3), fast = aiActions(TICK_RATE / 2); // 20 vs 120 APM
   assert(fast.ai > slow.ai * 3, 'a faster player faces a faster AI (' + slow.ai + ' -> ' + fast.ai + ' re-aims/min)');
@@ -386,10 +388,25 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   assert(cap.energy < e0, 'breached vents bleed energy');
   const moved = Math.hypot(cap.x - x0, cap.y - y0);
   assert(Math.abs(moved - CLASSES.capital.speed * s.T.engineCripple / TICK_RATE) < 0.01, 'engines out -> crippled speed');
-  const before = cap.gunAngle;
-  const f = s.units[0]; f.x = cap.x + 100; f.y = cap.y + 100;
-  for (let t = 0; t < 30; t++) s.step();
-  assert(cap.gunAngle === before && s.poolStats.fired === 0, 'bridge out -> turret stops tracking and firing');
+  // Bridge out: fire control damaged, not dead — the turret still tracks and
+  // fires, but traverses slower and its lock is capped.
+  function traverse(bridgeOut) {
+    const s2 = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: ENEMY }]);
+    const [f2, c2] = s2.units;
+    c2.x = 0; c2.y = 0; c2.heading = 0; c2.gunAngle = 0;
+    if (bridgeOut) for (const w of c2.weak) if (w.type === 'bridge') { w.hp = 0; w.out = true; }
+    let fired = 0;
+    for (let t = 0; t < 120; t++) { // 4s: a damaged turret needs ~1.3s to swing 90 deg
+      f2.x = 0; f2.y = 150; f2.vx = f2.vy = 0; // off the turret's right, in range
+      s2.step();
+      for (const e of s2.events) if (e.type === 'fired' && e.unit === c2.id) fired++;
+    }
+    return { swung: Math.abs(c2.gunAngle), fired: fired, lockCap: c2.lockCap };
+  }
+  const ok = traverse(false), hurt = traverse(true);
+  assert(hurt.swung > 0.3 && hurt.fired > 0, 'bridge out -> turret still tracks and fires (' + hurt.fired + ' shots)');
+  assert(hurt.swung < ok.swung || hurt.fired < ok.fired, 'bridge out -> slower, weaker turret (' + hurt.fired + ' vs ' + ok.fired + ' shots)');
+  assert(hurt.lockCap <= s.T.bridgeLockCap + 1e-9, 'bridge out -> lock capped at ' + s.T.bridgeLockCap);
 }
 
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------

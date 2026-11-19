@@ -822,9 +822,10 @@ function drawWorld() {
 
     // Turret (capitals only): dome + barrel drawn at gunAngle, independent of hull.
     if (u.state === 'alive' && cls.turret) {
+      const damaged = u.weak.some(w => w.out && w.type === 'bridge'); // fire control hit: orange turret
       ctx.beginPath(); ctx.arc(u.x, u.y, r * 0.38, 0, 7);
-      ctx.fillStyle = '#0b0e14'; ctx.fill();
-      ctx.strokeStyle = u.held ? '#fff' : TEAMCOL[u.team];
+      ctx.fillStyle = damaged ? '#3a2208' : '#0b0e14'; ctx.fill();
+      ctx.strokeStyle = damaged ? '#ff9a3c' : u.held ? '#fff' : TEAMCOL[u.team];
       ctx.lineWidth = 2 / cam.scale; ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(u.x, u.y);
