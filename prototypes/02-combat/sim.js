@@ -269,6 +269,17 @@
         u.stallTimer = 0;
         this.events.push({ type: 'released', unit: this.held[team], team: team, tick: this.tick });
         this.held[team] = -1;
+      } else if (cmd.type === 'order') {
+        // Click-to-move: turn this side's ship toward a direction at its own
+        // turn rate. Same effect as a fling: re-energises it (momentum 1).
+        const u = this.units[cmd.unit];
+        if (!u || u.team !== team || u.state !== ALIVE || u.held) continue;
+        if (typeof cmd.angle !== 'number' || !isFinite(cmd.angle)) continue;
+        u.goal = cmd.angle;
+        u.momentum = 1;
+        u.stallTimer = 0;
+        this.events.push({ type: 'ordered', unit: u.id, team: team, tick: this.tick });
+        this.actions[team].push(this.tick);
       } else if (cmd.type === 'dodge') {
         const u = this._actor(cmd, team);
         if (!u || u.state !== ALIVE || u.dodgeTimer > 0 || u.lockoutTimer > 0) continue;

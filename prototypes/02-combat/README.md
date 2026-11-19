@@ -7,9 +7,11 @@ fixed-gun ships (incl. a torpedo bomber) plus one capital per side.
 
 ## Run
 
-- **Play:** open `combat.html` (mouse or touch). Drag a ship to steer it — the
-  only way to give an order. Keys 1–6 just select a ship (camera, bubble, and
-  what DODGE / Space and REFOCUS / F act on).
+- **Play:** open `combat.html` (mouse or touch). Select a ship by clicking it
+  or pressing 1–6, then click the map to send it that way (it turns at its own
+  rate). Or drag a ship to steer it directly. Click the selected ship again or
+  press Esc to deselect. DODGE / Space and REFOCUS / F act on the held ship,
+  else the selected one. Orders and grabs count toward your APM.
   **Game speed** slider bottom-left (default 0.5×, presets ¼× ½× 1×, pause / P);
   remembered between visits. It only changes how fast real time feeds the
   fixed-tick sim, so results are identical at any speed.

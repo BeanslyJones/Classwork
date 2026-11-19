@@ -315,6 +315,26 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   assert(theirs.dodgeTimer === 0 && theirs.energy === t0, "can't dodge the other side's ship");
 }
 
+// --- 5j. Click-to-move orders. ------------------------------------------------
+{
+  console.log('\n[click-to-move orders]');
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'fighter', team: ENEMY }]);
+  const [mine, theirs] = s.units;
+  mine.heading = 0; mine.momentum = 0.4;
+  s.command({ type: 'order', unit: mine.id, angle: Math.PI / 2 });
+  s.step();
+  assert(mine.goal === Math.PI / 2 && mine.momentum > 0.99, 'order sets the ship turning toward the point and re-energises it');
+  assert(mine.heading > 0 && mine.heading < 0.2, 'turns at its own rate, no snap');
+  const hb = theirs.heading;
+  s.command({ type: 'order', unit: theirs.id, angle: 1 });
+  s.step();
+  assert(theirs.goal !== 1, "can't order the other side's ship");
+  const apmBefore = s.actions[PLAYER].length;
+  s.command({ type: 'order', unit: mine.id, angle: 0 });
+  s.step();
+  assert(s.actions[PLAYER].length === apmBefore + 1, 'an order counts toward APM');
+}
+
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');

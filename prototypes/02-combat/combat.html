@@ -105,11 +105,11 @@
       dead centre can reach a full lock, the edge stays weak. Holding it in the arc builds the lock, which
       tightens spread, leads the target and speeds up reloads. Lock line: green = centre entry, red = edge;
       brighter = stronger lock. Torpedo bombers (6) fire slow torpedoes that do 3× to capitals.
-      One energy pool = health + ammo + boost. F: refocus. 1–6: select a ship (no order — drag a ship to steer it). R: restart. N: new seed.
+      One energy pool = health + ammo + boost. F: refocus. Click/tap a ship or press 1–6 to select it; click the map to send it that way (or drag the ship). Click the selected ship again or Esc to deselect. R: restart. N: new seed.
       Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
       Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
       <b>Snap</b> zooms to the selected ship, <b>Bubble</b> keeps the wide view and
-      magnifies around it. Grabbing a ship selects it; tap empty space to deselect
+      magnifies around it. Grabbing a ship selects it; tap it again (or Esc) to deselect
       (closes the bubble). The slider under the buttons is the current mode's zoom.
       Ships hidden under the bubble show through as outlines.<br><br>
       Built for landscape: one thumb drags ships, the other hits DODGE and REFOCUS
@@ -316,7 +316,8 @@ function focusUnit() {
 const camState = { cx: 0, cy: 0, s: 0, bubble: 0 }; // smoothed camera (world centre, scale, bubble openness)
 
 // ---- Pointer input: one path for mouse and touch. ----
-let pointer = { x: 0, y: 0, down: false, id: -1 };
+let pointer = { x: 0, y: 0, down: false, id: -1, sx: 0, sy: 0, dragged: false, wasSelected: false };
+const orderMarks = []; // click-to-move markers (render-only)
 let cam = { scale: 1, ox: 0, oy: 0 };
 function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
 function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -329,27 +330,42 @@ cv.addEventListener('pointerdown', e => {
   pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
   cv.setPointerCapture(e.pointerId);
   const w = toWorld(p.x, p.y);
-  // Pick the nearest of your ships within a finger's reach; a miss deselects.
-  const PICK_PX = 70;
+  pointer.sx = p.x; pointer.sy = p.y; pointer.dragged = false;
+  // Pick the nearest of your ships within a finger's reach.
+  const PICK_PX = 40;
   let bestU = null, bestD = Infinity;
   for (const u of sim.units) {
     if (u.team !== MINE() || u.state !== 'alive') continue;
     const d = Math.hypot(u.x - w.x, u.y - w.y) * cam.scale;
     if (d < bestD) { bestD = d; bestU = u; }
   }
-  if (bestU && bestD <= PICK_PX && myTeam >= 0) { act({ type: 'grab', unit: bestU.id }); selected = bestU.id; }
-  else { selected = -1; pointer.down = false; pointer.id = -1; }
+  if (bestU && bestD <= PICK_PX && myTeam >= 0) {
+    // On a ship: grab it (drag to steer). Tapping the already-selected ship deselects it.
+    pointer.wasSelected = selected === bestU.id;
+    act({ type: 'grab', unit: bestU.id }); selected = bestU.id;
+  } else {
+    // Empty space: order the selected ship to turn toward this point.
+    pointer.down = false; pointer.id = -1;
+    const s = selected >= 0 ? sim.units[selected] : null;
+    if (s && s.state === 'alive' && myTeam >= 0) {
+      act({ type: 'order', unit: s.id, angle: Math.atan2(w.y - s.y, w.x - s.x) });
+      orderMarks.push({ x: w.x, y: w.y, age: 0 });
+    }
+  }
 });
 cv.addEventListener('pointermove', e => {
   if (pointer.down && e.pointerId !== pointer.id) return;
   const p = localXY(e);
   pointer.x = p.x; pointer.y = p.y;
+  if (pointer.down && Math.hypot(p.x - pointer.sx, p.y - pointer.sy) > 8) pointer.dragged = true;
 });
 function endPointer(e) {
   if (!pointer.down || e.pointerId !== pointer.id) return;
+  const tap = !pointer.dragged;
+  if (!tap) flushAim(true);
   pointer.down = false; pointer.id = -1;
-  flushAim(true);
-  act({ type: 'release' });
+  act({ type: 'release' }); // a tap releases on the ship's own heading: selects, no order
+  if (tap && pointer.wasSelected) selected = -1;
 }
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
@@ -388,7 +404,7 @@ function pushFlashes(events) {
 let lastAimSent = 0;
 function currentAim() {
   const h = sim.held[MINE()];
-  if (!pointer.down || h < 0) return null;
+  if (!pointer.down || h < 0 || !pointer.dragged) return null;
   const u = sim.units[h], w = toWorld(pointer.x, pointer.y);
   return Math.atan2(w.y - u.y, w.x - u.x);
 }
@@ -522,6 +538,7 @@ function render(dtReal) {
   cam.oy = H / 2 - camState.cy * cam.scale;
 
   // Age effects once per frame (both the main view and the bubble draw them).
+  for (let i = orderMarks.length - 1; i >= 0; i--) { orderMarks[i].age += dtReal; if (orderMarks[i].age >= 0.6) orderMarks.splice(i, 1); }
   for (let i = flashes.length - 1; i >= 0; i--) {
     flashes[i].age += dtReal;
     if (flashes[i].age >= (flashes[i].big ? 0.6 : 0.35)) flashes.splice(i, 1);
@@ -781,6 +798,14 @@ function drawWorld() {
     ctx.lineWidth = 1.5 / cam.scale;
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  // Click-to-move markers
+  for (const m of orderMarks) {
+    const t = m.age / 0.6;
+    ctx.beginPath(); ctx.arc(m.x, m.y, (8 + 14 * t) / cam.scale * 1.5, 0, 7);
+    ctx.strokeStyle = 'rgba(160,255,190,' + (1 - t) * 0.9 + ')';
+    ctx.lineWidth = 2 / cam.scale; ctx.stroke();
   }
 
   // Aim line
