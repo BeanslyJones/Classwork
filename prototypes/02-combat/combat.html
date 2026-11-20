@@ -567,6 +567,8 @@ const CAM_TUN = {
   bubbleGrow: { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'Bubble: how fast it grows open / shrinks closed.' },
   camSmooth:  { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'How quickly the camera glides to its target (higher = snappier).' },
   enemyConePx: { value: 160, min: 0,  max: 800, step: 10,  tip: 'Enemy firing cones show only when that enemy is within this many screen pixels of one of your ships (800 = always).' },
+  shipMinPx:   { value: 13,  min: 0,  max: 40,  step: 1,   tip: 'Zoomed out, a fighter is drawn at least this many pixels across (radius); every ship grows by the same factor, so sizes stay in proportion.' },
+  shipMaxBoost:{ value: 2.5, min: 1,  max: 5,   step: 0.1, tip: 'The most ships may be enlarged beyond their real size when zoomed out (1 = always true size).' },
 };
 const camCfg = {};
 for (const k in CAM_TUN) camCfg[k] = CAM_TUN[k].value;
@@ -1096,6 +1098,8 @@ function drawWorld() {
   const hotNum = new Map();
   { let n = 0; for (const v of sim.units) if (flyable(v)) { n++; if (n <= 9) hotNum.set(v.id, n); } }
   const px = 1 / cam.scale; // one screen pixel in world units
+  // Zoomed out, ships are drawn bigger than life (same factor for all, capped) so they stay readable.
+  const shipBoost = Math.max(1, Math.min(camCfg.shipMaxBoost, camCfg.shipMinPx / (sim.T.unitRadius * cam.scale)));
   ctx.save();
   ctx.translate(cam.ox, cam.oy);
   ctx.scale(cam.scale, cam.scale);
@@ -1141,7 +1145,7 @@ function drawWorld() {
   for (const u of sim.units) {
     if (u.state === 'crystallized' || u.hidden) continue;
     const cls = CLASSES[u.cls];
-    const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
+    const r = shipBoost * sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
     ctx.translate(u.x, u.y);
     if (myTeam >= 0 && u.team === MINE() && !flyable(u)) ctx.globalAlpha = 0.5; // a teammate's ship: dimmed so yours pop
@@ -1235,13 +1239,9 @@ function drawWorld() {
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5 / cam.scale; ctx.stroke();
       ctx.setLineDash([]);
     }
-    // YOURS: a gold chevron over every ship you can fly, a big hotkey badge, and a
-    // pulsing ring for the first seconds of a battle so you find them at once.
+    // YOURS: a big gold hotkey badge on every ship you can fly, and a pulsing
+    // ring for the first seconds of a battle (or on H / MINE) so you find them at once.
     if (u.state === 'alive' && flyable(u) && myTeam >= 0) {
-      const top = u.y - r - 8 * px;
-      ctx.beginPath();
-      ctx.moveTo(u.x - 8 * px, top - 9 * px); ctx.lineTo(u.x, top); ctx.lineTo(u.x + 8 * px, top - 9 * px);
-      ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 3 * px; ctx.lineJoin = 'round'; ctx.stroke();
       const num = hotNum.get(u.id);
       if (num) {
         const bx = u.x + r + 12 * px, by = u.y - r - 12 * px;
