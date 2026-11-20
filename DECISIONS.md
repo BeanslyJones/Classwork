@@ -152,3 +152,7 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   energy; **two turrets, one per side, each limited to a 90° sector**. One per team.
 - **Carrier** that manufactures ships; **Destroy the Carrier** game mode.
 - Money: per second, plus salvaging ship wrecks.
+
+## 18. No stalling
+- Ships never stall or die from being ignored. An ignored ship slows to
+  cruising speed and drifts. (Stalling came from the original brief; dropped.)

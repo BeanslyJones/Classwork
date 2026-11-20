@@ -149,7 +149,8 @@ your LAN). No lag smoothing — fine on home Wi-Fi, untested over anything slowe
   `bridgeTurn`, lock capped at `bridgeLockCap`; dome turns orange), engine -> speed/turn
   x `engineCripple`, vent -> hull bleeds `ventLeak`/s. Placeholder layout: bridge
   at the nose, engine at the tail, a vent on each side.
-- Momentum decay (`momentumDrain`, the juggle clock) halved to 0.0275/s.
+- Momentum decay (`momentumDrain`) 0.0275/s: an ignored ship slows toward
+  `minSpeed` and drifts (amber ring). **Ships never stall.**
 - Dodge = barrel roll: dead-straight line, flat energy cost, turn lockout after.
 - One energy pool per ship = health + ammo + boost. Ships hold fire below an
   energy floor. No recharge yet — that arrives with friendly fields (step 4).

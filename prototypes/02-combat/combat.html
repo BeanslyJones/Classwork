@@ -905,9 +905,9 @@ function drawWorld() {
         ctx.arc(0, 0, r + 12, -Math.PI / 2, -Math.PI / 2 + bf * Math.PI * 2);
         ctx.strokeStyle = 'rgba(90,220,255,0.85)'; ctx.lineWidth = 2.5 / cam.scale; ctx.stroke();
       }
-      if (sim.human[u.team] && !cls.noStall && u.momentum <= 0.25) { // juggle warning
+      if (sim.human[u.team] && !cls.noStall && u.momentum <= 0.25) { // slowing down: wants an order
         ctx.beginPath(); ctx.arc(0, 0, r + 12, 0, 7);
-        ctx.strokeStyle = 'rgba(232,90,74,' + (0.4 + 0.6 * Math.abs(Math.sin(sim.tick * 0.3))) + ')';
+        ctx.strokeStyle = 'rgba(232,195,74,' + (0.3 + 0.4 * Math.abs(Math.sin(sim.tick * 0.2))) + ')';
         ctx.lineWidth = 2 / cam.scale;
         ctx.stroke();
       }
@@ -1294,7 +1294,7 @@ const TUT_STEPS = [
   { msg: 'Each ship has a <b>firing cone</b>. Guns lock the first enemy to enter it. Entering through the <b style="color:#5fd08a">green</b> middle allows a full lock (accurate, leading, faster fire); <b style="color:#e8c34a">yellow</b> less; <b style="color:#e85a4a">red</b> edges the least. Fly so enemies cross your nose.', next: true },
   { msg: '<b>Retarget:</b> press <b>T</b> (or the RETARGET button) to drop the current lock — the next enemy into the cone becomes the target. Watch for the bracket and beep.', done: () => tut.seen.refocus, wait: 'press T' },
   { msg: '<b>Dodge:</b> press <b>Space</b> (or DODGE). The ship barrel-rolls in a straight line — costs energy, can\'t turn for a moment after.', done: () => tut.seen.dodge, wait: 'press Space' },
-  { msg: 'Ships you leave alone <b>slow down and stall</b> — a pulsing red ring means one needs you. Keep giving orders: that\'s the juggle. The AI only acts as fast as you do (APM, top left).', next: true },
+  { msg: 'Ships you leave alone <b>slow down and drift</b> (they never stall) — a pulsing amber ring means one wants an order. Keep giving orders: that\'s the juggle. The AI only acts as fast as you do (APM, top left).', next: true },
   { msg: 'Your <b>Grayzer</b> (the big ship) has a turret on each side and a <b style="color:#5adcff">battery</b>: friendly ships near it recharge (cyan beam). Watch its weak points — knocking out the bridge cripples its turrets.', next: true },
   { msg: '<b>Camera:</b> press <b>C</b> (or the buttons top right) to try Snap and Bubble.', done: () => camMode !== 'fit', wait: 'press C' },
   { msg: '<b>Now win:</b> destroy both enemy ships. Use everything you just learned.', done: () => sim.aliveCount(1) === 0, wait: 'destroy the enemies' },

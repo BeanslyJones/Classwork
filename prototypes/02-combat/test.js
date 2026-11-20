@@ -473,7 +473,7 @@ function wrapA2(x) { while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) 
   assert(myCar.state === 'alive' && myCar.momentum >= 0.99, 'an ignored carrier never stalls');
   // salvage
   s.wrecks.push({ x: 5000, y: 5000, value: 77, ttl: 30 });
-  const fighter = s._spawn('fighter', PLAYER, 0, 0, 0); // fresh ship: the test's others stalled while ignored
+  const fighter = s._spawn('fighter', PLAYER, 0, 0, 0); // fresh ship parked on the wreck spot
   const mS = s.money[PLAYER];
   fighter.x = 5000; fighter.y = 5000;
   s.step();
@@ -590,7 +590,7 @@ function battle(seed, useBot, ticks) {
   console.log('    juggled:   ' + fmt(sum.j));
   // With wide turns most battles are still going at 90s, so judge by kills.
   const killsN = 6 * N - sum.n.foes, killsJ = 6 * N - sum.j.foes;
-  assert(sum.j.ss > sum.n.ss * 1.3, 'juggling buys >30% more ship-seconds');
+  // Ships never stall now, so survival time no longer measures neglect — kills do.
   assert(killsJ >= killsN * 1.5, 'juggling kills far more enemies (' + (killsJ / N).toFixed(1) + ' vs ' + (killsN / N).toFixed(1) + ' per battle)');
 }
 

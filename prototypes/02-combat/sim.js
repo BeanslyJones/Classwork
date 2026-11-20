@@ -27,9 +27,8 @@
     aiApmMin:        { value: 10,    min: 0,   max: 100,  tooltip: 'Floor on AI APM so an idle player still faces an opponent that moves.' },
     edgeSteer:       { value: 2.2,   min: 0,   max: 10,   tooltip: 'Corrective turn (rad/s) past the soft edge.' },
     minSpeed:        { value: 50,    min: 0,   max: 100,  tooltip: 'Speed floor while momentum > 0.' },
-    momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only — the juggle clock).' },
+    momentumDrain:   { value: 0.0275, min: 0,   max: 0.5,  tooltip: 'Momentum lost per second while unpossessed (player team only): an ignored ship slows toward minSpeed and drifts. Ships never stall.' },
     driftNoise:      { value: 1.4,   min: 0,   max: 8,    tooltip: 'Heading wobble (rad/s) at zero momentum.' },
-    stallGraceSec:   { value: 2.5,   min: 0.5, max: 10,   tooltip: 'Seconds a stalled unit can still be saved.' },
     crystallizeSec:  { value: 1.2,   min: 0.1, max: 5,    tooltip: 'Seconds from fatal blow to crystallized salvage.' },
     hazardCount:     { value: 0,     min: 0,   max: 30,   tooltip: 'Seeded crystal formations (off for now). Projectiles detonate on them (cover). Reset to apply.' },
     wreckCrystals:   { value: 0,     min: 0,   max: 1,    tooltip: '1 = dead ships leave a crystal wreck that kills on contact and blocks shots (off for now).' },
@@ -844,13 +843,7 @@
         if (Math.abs(d) > lim) u.heading = heading0 + Math.sign(d) * lim;
       }
 
-      // --- Stall (human-flown sides only — the AI opposition does not juggle) ---
-      if (juggles && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
-        u.vx = 0; u.vy = 0;
-        u.stallTimer += dt;
-        if (u.stallTimer >= T.stallGraceSec) this._kill(u, 'stalled');
-        continue;
-      }
+      // Ships never stall: an ignored ship just slows to minSpeed and drifts.
 
       // --- Movement ---
       let speed = juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed;
