@@ -78,12 +78,13 @@
 <script src="../shared/wx/field.js"></script>
 <script src="../shared/wx/global.js"></script>
 <script src="../shared/wx/agents.js"></script>
+<script src="../shared/wx/render.js"></script>
 <script>
 'use strict';
 const { createBus } = Bus;
 const { TUNABLES, GASES } = Wx.global;
 const { startGlobalAgent, startKeyframeLog, createWeatherClient } = Wx.agents;
-const COL = [[255, 122, 69], [226, 103, 216], [63, 201, 160], [232, 210, 122]]; // cinder, bloom, brine, halo
+const COL = Wx.render.COL; // cinder, bloom, brine, halo
 
 // ---- Settings ---------------------------------------------------------------
 const VIEW = {
@@ -117,6 +118,7 @@ function slider(parent, key, t, get, set, label) {
 for (const k in VIEW) slider(document.getElementById('viewTun'), k, VIEW[k], () => view[k], v => {
   view[k] = v;
   if (k === 'D' || k === 'warpScale') { client.opts.D = view.D; client.opts.warpScale = view.warpScale; }
+  if (k in renderer.view) renderer.view[k] = v;
 });
 for (const k in BUSV) slider(document.getElementById('busTun'), k, BUSV[k], () => busv[k], v => { busv[k] = v; }, 'packet loss');
 const STRUCTURAL = new Set(['worldSize', 'parcelsPerGas', 'tickRate']);
@@ -138,7 +140,7 @@ function restart(newSeed) {
   client = createWeatherClient(bus, { D: view.D, warpScale: view.warpScale, drop: () => Math.random() < busv.loss });
   agent = startGlobalAgent(bus, { seed: seed, overrides: overrides, kfEvery: 5, lead: 2, countBytes: true });
   worldT = 0;
-  sparks.length = 0;
+  renderer.clearSparks();
   mapDirty = true;
 }
 document.getElementById('btnRestart').addEventListener('click', () => restart(false));
@@ -148,7 +150,7 @@ function togglePause() { paused = !paused; pauseBtn.textContent = paused ? 'Play
 pauseBtn.addEventListener('click', togglePause);
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
 for (const b of document.querySelectorAll('#layerSeg button')) b.addEventListener('click', () => {
-  layer = b.dataset.layer;
+  layer = b.dataset.layer; renderer.view.layer = layer;
   for (const o of document.querySelectorAll('#layerSeg button')) o.classList.toggle('on', o === b);
 });
 window.addEventListener('keydown', e => {
@@ -180,117 +182,8 @@ cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', e
 cv.addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0015)); }, { passive: false });
 function zoomBy(f) { cam.upp = Math.min(3, Math.max(0.08, cam.upp * f)); }
 
-// ---- Rendering --------------------------------------------------------------
-const low = document.createElement('canvas'), lctx = low.getContext('2d');
-let img = null;
-const out = new Float64Array(12), wv = [0, 0];
-const sparks = [];
-let cand = [], candN = 0;
-const W8 = 4; // warp lattice: one warp per W8 x W8 samples, blended between (it's smooth anyway)
-let warpX = new Float32Array(0), warpY = new Float32Array(0);
-
-let seamW = 0.16; // seam band width this frame (kept the same on screen at any zoom)
-function shade(d, i, o, nudge) {
-  const c = COL[o[0]], m = o[2];
-  const e = m < seamW ? 1 - m / seamW : 0;                      // 1 on the seam, 0 inside
-  const k = 0.30 + 0.24 * Math.min(1, m * 2.4) + 0.07 * nudge;  // zone body: deeper = brighter
-  const pn = o[4] / view.pScale;
-  const heat = e * e * e * (pn > 0 ? (pn > 1 ? 1 : pn) : 0);
-  const tear = e * e * (pn < 0 ? (pn < -1 ? 1 : -pn) : 0);
-  // Seam colour: every gas blended by its share, so it never jumps when the
-  // second-strongest gas changes.
-  const s0 = o[8], s1 = o[9], s2 = o[10], s3 = o[11];
-  const mr = s0 * COL[0][0] + s1 * COL[1][0] + s2 * COL[2][0] + s3 * COL[3][0];
-  const mg = s0 * COL[0][1] + s1 * COL[1][1] + s2 * COL[2][1] + s3 * COL[3][1];
-  const mb = s0 * COL[0][2] + s1 * COL[1][2] + s2 * COL[2][2] + s3 * COL[3][2];
-  const mixw = e * e * 0.75, dark = 1 - 0.6 * tear, hot = 0.75 + 0.6 * heat;
-  let r = (c[0] * k * (1 - mixw) + mr * mixw * hot) * dark + 120 * heat;
-  let gg = (c[1] * k * (1 - mixw) + mg * mixw * hot) * dark + 110 * heat;
-  let b = (c[2] * k * (1 - mixw) + mb * mixw * hot) * dark + 95 * heat;
-  d[i] = r > 255 ? 255 : r; d[i + 1] = gg > 255 ? 255 : gg; d[i + 2] = b > 255 ? 255 : b; d[i + 3] = 255;
-  return heat;
-}
-
-function renderSky(W, H) {
-  const px = view.pixel, bw = Math.ceil(W / px), bh = Math.ceil(H / px);
-  if (low.width !== bw || low.height !== bh) { low.width = bw; low.height = bh; img = lctx.createImageData(bw, bh); }
-  const d = img.data, upp = cam.upp * px, x0 = cam.x - bw / 2 * upp, y0 = cam.y - bh / 2 * upp;
-  // Warp lattice for the local layer (visual shortcut; gameplay samples exactly).
-  const lw = Math.ceil(bw / W8) + 2, lh = Math.ceil(bh / W8) + 2;
-  if (layer === 'local') {
-    if (warpX.length < lw * lh) { warpX = new Float32Array(lw * lh); warpY = new Float32Array(lw * lh); }
-    for (let j = 0; j < lh; j++) for (let i = 0; i < lw; i++) {
-      client.warpAt(x0 + i * W8 * upp, y0 + j * W8 * upp, wv);
-      warpX[j * lw + i] = wv[0]; warpY[j * lw + i] = wv[1];
-    }
-  }
-  candN = 0;
-  seamW = view.seamWidth * Math.pow(Math.min(1, cam.upp / fitUpp), 0.75);
-  const Dn = client.opts.D > 0 ? client.opts.D * 0.7071 : 1;
-  for (let y = 0; y < bh; y++) {
-    const wy = y0 + y * upp;
-    for (let x = 0; x < bw; x++) {
-      const wx = x0 + x * upp, i = (y * bw + x) * 4;
-      if (layer === 'global') {
-        const g = client.gasGlobal(wx, wy), c = COL[g];
-        d[i] = c[0] * 0.5; d[i + 1] = c[1] * 0.5; d[i + 2] = c[2] * 0.5; d[i + 3] = 255;
-        continue;
-      }
-      let sx = wx, sy = wy, nudge = 0;
-      if (layer === 'local') {
-        const fx = x / W8, fy = y / W8, ix = fx | 0, iy = fy | 0, tx = fx - ix, ty = fy - iy, o = iy * lw + ix;
-        const dx = (warpX[o] * (1 - tx) + warpX[o + 1] * tx) * (1 - ty) + (warpX[o + lw] * (1 - tx) + warpX[o + lw + 1] * tx) * ty;
-        const dy = (warpY[o] * (1 - tx) + warpY[o + 1] * tx) * (1 - ty) + (warpY[o + lw] * (1 - tx) + warpY[o + lw + 1] * tx) * ty;
-        sx += dx; sy += dy; nudge = dx / Dn;
-      }
-      client.sampleRegional(sx, sy, out);
-      const heat = shade(d, i, out, nudge);
-      if (heat > 0.25 && candN < 600 && Math.random() < 0.08) {
-        cand[candN++] = [wx, wy, out[5], out[6], heat, out[0], out[1]];
-      }
-    }
-  }
-  if (layer === 'global') { // the map has no glow: mark seams where neighbours differ
-    for (let y = 0; y < bh - 1; y++) for (let x = 0; x < bw - 1; x++) {
-      const i = (y * bw + x) * 4, r = i + 4, dn = i + bw * 4;
-      if (d[i] !== d[r] || d[i + 1] !== d[r + 1] || d[i] !== d[dn] || d[i + 1] !== d[dn + 1]) { d[i] = d[i + 1] = d[i + 2] = 235; }
-    }
-  }
-  lctx.putImageData(img, 0, 0);
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(low, 0, 0, bw * px, bh * px);
-}
-
-function updateSparks(dt) {
-  // Same spark density in the world at any zoom.
-  const rate = view.sparks * candN * 0.5 * dt * 6 * Math.min(1, (cam.upp / fitUpp) * (cam.upp / fitUpp) * 4);
-  for (let k = 0; k < rate && sparks.length < 900; k++) {
-    const c = cand[(Math.random() * candN) | 0];
-    if (!c) break;
-    const a = Math.random() * 6.2832, s = 8 + 30 * c[4] * Math.random();
-    sparks.push({ x: c[0], y: c[1], vx: c[2] * 2 + Math.cos(a) * s, vy: c[3] * 2 + Math.sin(a) * s,
-                  life: 0, max: 0.35 + Math.random() * 0.7, col: Math.random() < 0.5 ? c[5] : c[6], h: c[4] });
-  }
-  for (let i = sparks.length - 1; i >= 0; i--) {
-    const s = sparks[i];
-    s.life += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 1 - 1.5 * dt; s.vy *= 1 - 1.5 * dt;
-    if (s.life >= s.max) sparks.splice(i, 1);
-  }
-}
-function drawSparks(W, H) {
-  if (!sparks.length) return;
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  const sz = Math.max(1.2, Math.min(4, 2.4 / cam.upp));
-  for (const s of sparks) {
-    const sx = (s.x - cam.x) / cam.upp + W / 2, sy = (s.y - cam.y) / cam.upp + H / 2;
-    if (sx < -10 || sy < -10 || sx > W + 10 || sy > H + 10) continue;
-    const a = 1 - s.life / s.max, c = COL[s.col];
-    ctx.fillStyle = 'rgba(' + Math.min(255, c[0] + 90) + ',' + Math.min(255, c[1] + 90) + ',' + Math.min(255, c[2] + 90) + ',' + (a * 0.9).toFixed(3) + ')';
-    ctx.fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
-  }
-  ctx.restore();
-}
+// ---- Rendering (shared with the battle: shared/wx/render.js) ----------------
+const renderer = Wx.render.createRenderer({ layer: 'local', seamWidth: view.seamWidth, pScale: view.pScale, sparks: view.sparks, pixel: view.pixel });
 
 // World map inset: the global layer for the whole world, with the camera box.
 const mapCv = document.createElement('canvas'), MAPN = 72;
@@ -362,9 +255,7 @@ function frame(now) {
   agent.advanceTo(worldT);
   const t0 = performance.now();
   if (client.setTime(worldT)) {
-    renderSky(W, H);
-    if (!paused) updateSparks(dt);
-    drawSparks(W, H);
+    renderer.draw(ctx, client, { W: W, H: H, x0: cam.x - W / 2 * cam.upp, y0: cam.y - H / 2 * cam.upp, upp: cam.upp, fitUpp: fitUpp }, paused ? 0 : dt);
     drawOverlays(W, H);
     if (document.getElementById('chkMap').checked) drawMap(W, H);
   } // else: keep the last picture while a missing keyframe is fetched from the log
@@ -379,7 +270,7 @@ function frame(now) {
       'published ' + agent.published + ' · in log ' + wlog.log.size + ' · ~' + (agent.bytes / Math.max(1, agent.published)).toFixed(0) + ' B each · ' +
       ((agent.bytes / Math.max(1, agent.published)) * (agent.sim.T.tickRate / K) * view.timeScale / 1024).toFixed(1) + ' KB/s<br>' +
       'viewer got ' + st.received + ' · dropped ' + st.dropped + ' · fetched from log ' + st.fetched + '<br>' +
-      'baked ' + st.bakes + ' regions (' + (st.bakeMs / Math.max(1, st.bakes)).toFixed(2) + ' ms each) · draw ' + renderMs.toFixed(1) + ' ms · sparks ' + sparks.length;
+      'baked ' + st.bakes + ' regions (' + (st.bakeMs / Math.max(1, st.bakes)).toFixed(2) + ' ms each) · draw ' + renderMs.toFixed(1) + ' ms · sparks ' + renderer.stats.sparks;
   }
   requestAnimationFrame(frame);
 }

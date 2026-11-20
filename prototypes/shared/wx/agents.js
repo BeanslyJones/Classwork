@@ -62,18 +62,34 @@
   }
 
   function createWeatherClient(bus, opts) {
-    opts = Object.assign({ regionsPerSide: 4, res: 32, D: 24, warpScale: 70, warpPeriod: 60, keepBehind: 2 }, opts || {});
+    // Regions are ~regionSize units across (so a 1000-unit sky = 4 x 4), unless regionsPerSide is given.
+    opts = Object.assign({ regionSize: 250, res: 32, D: 24, warpScale: 70, warpPeriod: 60, keepBehind: 2 }, opts || {});
     const kfs = new Map(), grids = new Map(), pending = new Set();
     const stats = { received: 0, dropped: 0, fetched: 0, bakes: 0, bakeMs: 0 };
-    let K = 0, L = null, detailSeed = 0;
+    let K = 0, L = null, detailSeed = 0, skySeed = -1;
     const cur = { a: -1, b: -1, alpha: 0, t: 0, ready: false };
     const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-    function accept(kf) {
-      if (!kf || kf.v !== field.VERSION || kfs.has(kf.kf)) return;
+    // A new sky (the server restarted with another seed or size): start over.
+    function reset() {
+      kfs.clear(); grids.clear(); pending.clear(); curA = []; curB = [];
+      K = 0; L = null; cur.a = cur.b = -1; cur.ready = false;
+    }
+    // fetched = an answer from the log. Only live keyframes may switch skies,
+    // so a late answer about the old sky can never undo a restart.
+    function accept(kf, fetched) {
+      if (!kf || kf.v !== field.VERSION) return;
+      if (K && (kf.seed !== skySeed || kf.size !== L.size || kf.every !== K)) {
+        if (fetched) return;
+        reset();
+      }
+      if (kfs.has(kf.kf)) return;
       kfs.set(kf.kf, kf);
       stats.received++;
-      if (!K) { K = kf.every; L = field.layout(kf.size, opts.regionsPerSide, opts.res); detailSeed = (kf.seed ^ 0x2545F491) >>> 0; }
+      if (!K) {
+        K = kf.every; skySeed = kf.seed; detailSeed = (kf.seed ^ 0x2545F491) >>> 0;
+        L = field.layout(kf.size, opts.regionsPerSide || Math.max(1, Math.round(kf.size / opts.regionSize)), opts.res);
+      }
     }
     const off = bus.subscribe('wx.global.kf', kf => {
       if (opts.drop && opts.drop(kf)) { stats.dropped++; return; }
@@ -82,7 +98,7 @@
     function fetch(n) {
       if (pending.has(n) || n < 0) return;
       pending.add(n); stats.fetched++;
-      bus.request('wx.kf.get', { kf: n }, 1500).then(kf => { pending.delete(n); accept(kf); }, () => pending.delete(n));
+      bus.request('wx.kf.get', { kf: n }, 1500).then(kf => { pending.delete(n); accept(kf, true); }, () => pending.delete(n));
     }
     function grid(n, rx, ry) {
       const key = n + ':' + rx + ':' + ry;
@@ -97,7 +113,7 @@
     }
     // Fast path: the grids for the current pair of keyframes, by region index.
     let curA = [], curB = [];
-    function regionOf(v) { const r = Math.floor(v / L.regionSize); return r >= opts.regionsPerSide ? opts.regionsPerSide - 1 : r; }
+    function regionOf(v) { const r = Math.floor(v / L.regionSize); return r >= L.regionsPerSide ? L.regionsPerSide - 1 : r; }
 
     const wv = [0, 0], wA = [0, 0, 0, 0], wB = [0, 0, 0, 0];
     const api = {
@@ -126,7 +142,7 @@
       // REGIONAL: baked grids blended between the two keyframes.
       sampleRegional(x, y, out) {
         x = field.wrap(x, L.size); y = field.wrap(y, L.size);
-        const rx = regionOf(x), ry = regionOf(y), ri = ry * opts.regionsPerSide + rx;
+        const rx = regionOf(x), ry = regionOf(y), ri = ry * L.regionsPerSide + rx;
         const gA = curA[ri] || (curA[ri] = grid(cur.a, rx, ry)), gB = curB[ri] || (curB[ri] = grid(cur.b, rx, ry));
         return field.sampleRegion(gA, gB, cur.alpha, L, rx, ry, x, y, out);
       },
@@ -159,5 +175,13 @@
     return api;
   }
 
-  return { startGlobalAgent: startGlobalAgent, startKeyframeLog: startKeyframeLog, createWeatherClient: createWeatherClient };
+  // Sky settings that cover a battle arena of radius R (centred on 0,0): the
+  // sky is a torus a bit bigger than the arena, with parcels scaled to its area
+  // so the zones stay about the same size. Battle (x, y) = sky (x + size/2, y + size/2).
+  function skyForArena(R) {
+    const size = Math.max(1000, Math.min(5000, Math.ceil(R * 2.4 / 100) * 100));
+    return { worldSize: size, parcelsPerGas: Math.max(3, Math.min(40, Math.round(12 * (size / 1000) * (size / 1000)))) };
+  }
+
+  return { startGlobalAgent: startGlobalAgent, startKeyframeLog: startKeyframeLog, createWeatherClient: createWeatherClient, skyForArena: skyForArena };
 });

@@ -14,7 +14,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 // Minimal SSE client: collects events by type.
 function connect(port) {
   return new Promise((resolve, reject) => {
-    const c = { hello: null, lastSnap: null, lobby: null, req: null };
+    const c = { hello: null, lastSnap: null, lobby: null, req: null, wx: [], perf: null };
     c.req = http.get({ host: '127.0.0.1', port: port, path: '/events' }, res => {
       let buf = '';
       res.setEncoding('utf8');
@@ -33,6 +33,8 @@ function connect(port) {
           if (type === 'hello') { c.hello = obj; resolve(c); }
           if (type === 'snap') c.lastSnap = obj;
           if (type === 'lobby') c.lobby = obj;
+          if (type === 'wx') c.wx.push(obj);
+          if (type === 'perf') c.perf = obj;
         }
       });
     });
@@ -128,6 +130,26 @@ function get(port, path) {
   await wait(150);
   assert(srv.sim.units[myShip.id].lane === 'keys', 'a player can put their ship on a lane');
   assert(a.lastSnap && a.lastSnap.song === 'drift', 'snapshots say which song is playing');
+
+  // Stress test over LAN: lots of ships, weather sampled on every ship.
+  const wxBefore = a.wx.length;
+  await post(port, a.hello.id, { type: 'restart', mode: 'stress', count: 200 });
+  await wait(1300);
+  assert(srv.sim.mode === 'stress' && srv.sim.units.length === 400, 'any player can start a stress test (200 ships a side)');
+  assert(a.hello.count === 200 && a.hello.mode === 'stress', 'screens are told the mode and ship count');
+  assert(srv.sim.units.filter(u => u.state === 'alive').every(u => u.zone >= 0 && u.zone < 4), 'the server knows which radiation zone every ship is in');
+  assert(a.perf && a.perf.ships === 400 && a.perf.stepMs > 0 && a.perf.snapKB > 0 && a.perf.outKBs > 0,
+    'performance reports reach the screens (tick ' + (a.perf && a.perf.stepMs) + ' ms, snapshot ' + (a.perf && a.perf.snapKB) + ' KB, ' + (a.perf && a.perf.outKBs) + ' KB/s out)');
+  const sky = a.wx.slice(wxBefore);
+  assert(sky.length >= 3 && sky[0].kf === 0, 'weather keyframes stream to the screen (' + sky.length + ' of the new sky)');
+  const capNow = Math.floor(srv.sim.tick / 3 / 5) + 2;
+  assert(sky.every(k => k.kf <= capNow), 'a screen never gets weather more than 2 keyframes ahead');
+  const wxGot = await get(port, '/wx?kf=1');
+  assert(wxGot.status === 200 && JSON.parse(wxGot.body).kf === 1, 'a screen can fetch a missed keyframe from the log');
+  const far = await get(port, '/wx?kf=' + (capNow + 50));
+  assert(far.status === 404, 'but not one from the future');
+  assert((await get(port, '/shared/wx/render.js')).status === 200 && (await get(port, '/shared/../server.js')).status === 404,
+    'serves the shared weather scripts and nothing else');
 
   // Snapshots stay in step with the server sim.
   const t0 = a.lastSnap.tick;

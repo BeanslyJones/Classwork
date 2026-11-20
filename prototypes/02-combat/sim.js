@@ -271,13 +271,29 @@
     return r;
   }
 
-  // opts: { mode: 'skirmish' | 'carrier' }
+  // Stress test: `count` ships per side, mostly small craft, a Grayzer every 50.
+  const STRESS_MIX = ['fighter', 'fighter', 'interceptor', 'heavy', 'fighter', 'bomber', 'interceptor', 'torpedo', 'aaa', 'fighter'];
+  function stressRoster(count) {
+    const r = [];
+    for (const team of [PLAYER, ENEMY]) for (let i = 0; i < count; i++) {
+      r.push({ cls: i % 50 === 25 ? 'capital' : STRESS_MIX[i % STRESS_MIX.length], team: team });
+    }
+    return r;
+  }
+
+  // opts: { mode: 'skirmish' | 'carrier' | 'beat' | 'stress', song, count }
   function Sim(seed, overrides, roster, opts) {
     this.seed = seed >>> 0;
     this.mode = (opts && opts.mode) || 'skirmish';
     this.T = {};
     for (const k in TUNABLES) this.T[k] = TUNABLES[k].value;
     if (this.mode === 'carrier') { this.T.arenaRadius = 820; this.T.spawnDist = 430; }
+    // Stress test: ships per side (10-1000) and a bigger arena to hold them.
+    this.stressCount = this.mode === 'stress' ? Math.max(10, Math.min(1000, Math.round((opts && opts.count) || 150))) : 0;
+    if (this.stressCount) {
+      this.T.arenaRadius = Math.round(520 + 30 * Math.sqrt(this.stressCount * 2));
+      this.T.spawnDist = Math.round(220 + 8 * Math.sqrt(this.stressCount));
+    }
     // Beat mode: the song is the shared clock that hands ships their time.
     this.song = this.mode === 'beat' ? (SONGS[opts && opts.song] || SONGS.assault) : null;
     this.songId = this.song ? ((opts && SONGS[opts.song]) ? opts.song : 'assault') : null;
@@ -330,7 +346,9 @@
     }
 
     // Teams spawn on opposite sides of the safe disc, already moving.
-    const list = roster || (this.mode === 'carrier' ? carrierRoster() : defaultRoster());
+    const list = roster || (this.mode === 'carrier' ? carrierRoster() : this.stressCount ? stressRoster(this.stressCount) : defaultRoster());
+    // Stress test: each side starts as a block (columns facing the enemy).
+    const cols = this.stressCount ? Math.max(4, Math.ceil(Math.sqrt(this.stressCount) / 1.5)) : 0, gap = 34;
     this.units = [];
     let pIdx = 0, eIdx = 0;
     const perTeam = [list.filter(r => r.team === PLAYER).length, list.filter(r => r.team === ENEMY).length];
@@ -341,6 +359,12 @@
       const baseAng = r.team === PLAYER ? Math.PI : 0; // player west, enemy east
       const ang = baseAng + ((slot - (n - 1) / 2) * 0.35);
       if (!CLASSES[r.cls]) throw new Error('unknown class: ' + r.cls);
+      if (cols) {
+        const side = r.team === PLAYER ? -1 : 1, rows = Math.ceil(n / cols);
+        const x = side * (this.T.spawnDist + (slot % cols) * gap), y = (Math.floor(slot / cols) - (rows - 1) / 2) * gap;
+        this._spawn(r.cls, r.team, x, y, baseAng + Math.PI);
+        continue;
+      }
       // Carriers sit well behind their line.
       const dist = this.T.spawnDist + (r.cls === 'carrier' ? 260 : 0);
       const a = r.cls === 'carrier' ? baseAng : ang;
@@ -1114,8 +1138,31 @@
 
     this._gridLive = false;
     if (this.mode === 'carrier') this._economy(dt);
+    if (this.stressCount && this.tick % 15 === 0) this._reinforce();
 
     this.tick++;
+  };
+
+  // Stress test: destroyed ships come back as reinforcements at their side's
+  // rear (same slot, same id), so the load holds steady. Deterministic: in id
+  // order, positions from the sim's seeded RNG.
+  Sim.prototype._reinforce = function () {
+    const T = this.T, per = [0, 0], cols = Math.max(4, Math.ceil(Math.sqrt(this.stressCount) / 1.5));
+    const depth = Math.ceil(this.stressCount / cols) * 34, cap = Math.max(12, Math.ceil(this.stressCount / 6));
+    for (let id = 0; id < this.units.length; id++) {
+      const old = this.units[id];
+      if (old.state !== CRYSTALLIZED || per[old.team] >= cap) continue;
+      per[old.team]++;
+      const side = old.team === PLAYER ? -1 : 1;
+      const x = side * (T.spawnDist + cols * 34 + 40 + this.rng() * 120), y = (this.rng() - 0.5) * depth;
+      const fresh = this._spawn(old.cls, old.team, x, y, old.team === PLAYER ? 0 : Math.PI);
+      this.units.pop();
+      fresh.id = id; fresh.decTick = -1 - id;
+      fresh.rng = mulberry32((this.seed ^ Math.imul(id + 1, 0x9E3779B1) ^ Math.imul(this.tick + 1, 0x85EBCA6B)) >>> 0);
+      this.units[id] = fresh;
+      for (const u of this.units) for (const g of u.guns) if (g.targetId === id) { g.targetId = -1; g.lockQ = 0; g.lockCap = 0; }
+      for (let t = 0; t < 2; t++) if (this.held[t] === id) this.held[t] = -1;
+    }
   };
 
   Sim.prototype.aliveCount = function (team) {

@@ -165,6 +165,13 @@
   #lanes.show { display: flex; }
   #lanes span { padding: 3px 6px; border-radius: 6px; color: #8fa3c8; transition: background .06s; }
   #lanes b { color: #cdd6e4; padding: 3px 6px; }
+  /* Stress test */
+  .stressRow { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 8px; color: #8fa3c8; font-size: 12px; letter-spacing: .08em; }
+  .stressRow button { padding: 6px 10px; font-size: 13px; }
+  #perf { position: absolute; top: 96px; left: 10px; z-index: 6; display: none; pointer-events: none; font: 11px/1.45 ui-monospace, Menlo, monospace;
+          background: rgba(10,13,20,.78); border: 1px solid #2e3a52; border-radius: 8px; padding: 6px 9px; color: #cdd6e4; white-space: pre; }
+  #perf.show { display: block; }
+  #perf .bad { color: #ff8a6a; } #perf .ok { color: #7fe0a0; }
   #menuBtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 8; font-weight: 700;
              letter-spacing: .12em; padding: 7px 14px; border-radius: 8px; background: rgba(16,20,29,.85); }
 </style>
@@ -183,6 +190,8 @@
       <button id="btnTutorial">TUTORIAL</button>
       <button id="btnGarage">GARAGE</button>
     </div>
+    <div class="stressRow" id="stressRow">STRESS TEST + WEATHER (ships):
+      <button data-count="50">100</button><button data-count="150">300</button><button data-count="300">600</button><button data-count="500">1000</button></div>
     <div class="sound">🔊 <input type="range" id="volIn" min="0" max="1" step="0.05"> <button id="muteBtn">Mute</button>
       ♪ <input type="range" id="musIn" min="0" max="1" step="0.05" title="Music volume (Beat Battle)"></div>
     <div class="tips">Select a ship (click it or 1–9), click the map to send it · drag a ship to steer ·
@@ -222,6 +231,7 @@
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="hud"></div>
+    <div id="perf"></div>
     <button id="panelToggle">⚙</button>
     <button id="menuBtn">☰ MENU</button>
     <div id="lanes"></div>
@@ -279,6 +289,12 @@
 </div>
 <script src="sim.js"></script>
 <script src="sfx.js"></script>
+<script src="../shared/bus.js"></script>
+<script src="../shared/wx/rng.js"></script>
+<script src="../shared/wx/field.js"></script>
+<script src="../shared/wx/global.js"></script>
+<script src="../shared/wx/agents.js"></script>
+<script src="../shared/wx/render.js"></script>
 <script>
 // Show any script error on screen (some browsers hide them), so a broken page
 // says why instead of just showing an empty arena.
@@ -330,6 +346,26 @@ const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const hud = document.getElementById('hud');
 
+// ---- Weather: the radiation zones under the battle (looks only, no effects) ----
+// Same services as the server: single player runs the sky in this page; over
+// LAN the server's keyframes arrive on the live stream and gaps come from /wx.
+const wxBus = Bus.createBus();
+const wxClient = Wx.agents.createWeatherClient(wxBus);
+const wxRenderer = Wx.render.createRenderer({ dim: 0.55, pixel: 4, every: 2 });
+let wxAgent = null, wxLog = null, wxOn = null; // wxOn null = automatic (shown in the stress test)
+const WX_PER_TICK = 3; // battle ticks per weather tick
+function wxVisible() { return wxOn === null ? sim.mode === 'stress' : wxOn; }
+function wxStartLocal() {
+  if (wxLog) wxLog.stop();
+  const sky = Wx.agents.skyForArena(sim.T.arenaRadius);
+  wxLog = Wx.agents.startKeyframeLog(wxBus);
+  wxAgent = Wx.agents.startGlobalAgent(wxBus, { seed: (sim.seed ^ 0x5EED5EED) >>> 0, overrides: sky, kfEvery: 5, lead: 2 });
+  wxAgent.advanceTo(0);
+}
+let stressCount = 150;
+const perfEl = document.getElementById('perf');
+let netPerf = null, fpsN = 0, fpsT = 0, fps = 0, frameMs = 0, localStepMs = 0, perfShow = false;
+
 const STRUCTURAL = new Set(['hazardCount', 'hazardBandInner', 'hazardRadiusMin', 'hazardRadiusMax', 'tickRate', 'arenaRadius']);
 const tunDiv = document.getElementById('tunables');
 for (const key in TUNABLES) {
@@ -362,7 +398,8 @@ function restart(newSeed) {
   if (NET) { act({ type: 'restart', newSeed: !!newSeed }); return; }
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   if (gameMode === 'tutorial') sim = new Sim(seed, Object.assign({}, overrides, { spawnDist: 470, aiApmMatch: 0.4 }), TUTORIAL_ROSTER);
-  else sim = new Sim(seed, overrides, null, { mode: gameMode, song: beatSong });
+  else sim = new Sim(seed, overrides, null, { mode: gameMode, song: beatSong, count: stressCount });
+  wxStartLocal();
   if (gameMode === 'beat') for (const id in planLanes) if (sim.units[id] && sim.units[id].team === 0) sim.units[id].lane = planLanes[id];
   bannerShown = false; document.getElementById('banner').classList.remove('show');
   selected = -1;
@@ -563,6 +600,8 @@ window.addEventListener('keydown', e => {
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
+  if (e.key === 'z' || e.key === 'Z') { wxOn = !wxVisible(); updatePerf(); }
+  if (e.key === 'g' || e.key === 'G') { perfShow = !perfShow; updatePerf(); }
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
   if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
   const bk = BUILD_KEYS.indexOf(e.key.toLowerCase());
@@ -649,13 +688,20 @@ function frame(now) {
     while (acc >= stepLen) {
       const a = currentAim();
       if (a !== null) sim.command({ type: 'aim', angle: a });
+      const ts = performance.now();
       sim.step();
+      localStepMs = localStepMs * 0.95 + (performance.now() - ts) * 0.05;
       pushFlashes(sim.events);
       if (sim.aliveCount(MINE()) > 0 && sim.aliveCount(THEIRS()) > 0) survivalTime += stepLen;
       acc -= stepLen;
     }
   }
+  if (wxAgent) wxAgent.advanceTo(sim.tick / WX_PER_TICK);
+  const tr = performance.now();
   render(dtReal);
+  frameMs = frameMs * 0.9 + (performance.now() - tr) * 0.1;
+  fpsN++; fpsT += dtReal;
+  if (fpsT >= 0.5) { fps = fpsN / fpsT; fpsN = 0; fpsT = 0; updatePerf(); }
   tutTick();
   requestAnimationFrame(frame);
 }
@@ -666,14 +712,24 @@ if (NET) {
   es.addEventListener('hello', ev => {
     const h = JSON.parse(ev.data);
     netId = h.id; myTeam = h.seat;
-    if (h.seed !== seed || !sim._net || (h.mode && h.mode !== sim.mode)) {
+    if (h.seed !== seed || !sim._net || (h.mode && h.mode !== sim.mode) || (h.mode === 'stress' && h.count !== sim.stressCount)) {
       seed = h.seed; overrides = h.overrides || {};
-      sim = new Sim(seed, overrides, null, { mode: h.mode || 'skirmish' }); sim._net = true;
+      sim = new Sim(seed, overrides, null, { mode: h.mode || 'skirmish', song: h.song, count: h.count }); sim._net = true;
       selected = -1; flashes.length = 0;
     }
     applyLobby(h);
   });
   es.addEventListener('lobby', ev => applyLobby(JSON.parse(ev.data)));
+  es.addEventListener('perf', ev => { netPerf = JSON.parse(ev.data); });
+  // Weather keyframes from the server; a missed one is fetched from its log.
+  es.addEventListener('wx', ev => wxBus.publish('wx.global.kf', JSON.parse(ev.data)));
+  const wxAsked = new Map();
+  wxBus.subscribe('wx.kf.get', (m, subject, replyTo) => {
+    const now = performance.now();
+    if (now - (wxAsked.get(m.kf) || -1e9) < 1000) return; // asked recently: let this request time out
+    wxAsked.set(m.kf, now);
+    fetch('/wx?kf=' + m.kf).then(r => (r.ok ? r.json() : null)).then(kf => wxBus.publish(replyTo, kf), () => wxBus.publish(replyTo, null));
+  });
   es.addEventListener('snap', ev => {
     const snap = JSON.parse(ev.data);
     sim.applySnapshot(snap);
@@ -772,6 +828,11 @@ function render(dtReal) {
 
   ctx.fillStyle = '#0b0e14';
   ctx.fillRect(0, 0, W, H);
+  if (wxVisible() && wxClient.setTime(sim.tick / WX_PER_TICK)) {
+    const S = wxClient.layout.size;
+    wxRenderer.draw(ctx, wxClient, { W: W, H: H, x0: -cam.ox / cam.scale + S / 2, y0: -cam.oy / cam.scale + S / 2,
+                                     upp: 1 / cam.scale, fitUpp: 1 / base }, paused ? 0 : dtReal);
+  }
   const restorePos = smoothForDraw(dtReal);
   updateConeVisibility();
   drawWorld();
@@ -878,11 +939,13 @@ function drawCone(x, y, ang, half, range, strength, team) {
 const coneVisible = new Set();
 function updateConeVisibility() {
   coneVisible.clear();
-  const mineAlive = sim.units.filter(u => u.team === MINE() && u.state === 'alive');
+  const crowd = sim.units.length > 60; // big fleets: only around the ship you're flying/selected
+  const mineAlive = sim.units.filter(u => u.team === MINE() && u.state === 'alive' && (!crowd || u.held || u.id === selected));
+  if (crowd && !mineAlive.length) return;
   const px = camCfg.enemyConePx;
   for (const u of sim.units) {
     if (u.state !== 'alive' || !u.guns.length) continue;
-    if (u.team === MINE()) { coneVisible.add(u.id); continue; }
+    if (u.team === MINE()) { if (!crowd || mineAlive.indexOf(u) >= 0) coneVisible.add(u.id); continue; }
     for (const m of mineAlive) {
       if (Math.hypot(u.x - m.x, u.y - m.y) * cam.scale <= px) { coneVisible.add(u.id); break; }
     }
@@ -891,6 +954,10 @@ function updateConeVisibility() {
 
 function drawWorld() {
   const R = sim.T.arenaRadius;
+  // Big fleets (stress test): cones, lock lines and labels only for the ship
+  // you're flying or have selected, so the picture (and the frame rate) holds up.
+  const crowd = sim.units.length > 60;
+  const focusOnly = u => !crowd || u.held || u.id === selected;
   ctx.save();
   ctx.translate(cam.ox, cam.oy);
   ctx.scale(cam.scale, cam.scale);
@@ -918,7 +985,7 @@ function drawWorld() {
   // the green middle can reach a full lock, yellow less, the red edges least.
   // All of yours are shown; an enemy's only when it is near one of your ships.
   for (const u of sim.units) {
-    if (u.state !== 'alive' || !coneVisible.has(u.id)) continue;
+    if (u.state !== 'alive' || !coneVisible.has(u.id) || !focusOnly(u)) continue;
     const cls = CLASSES[u.cls], mine = u.team === MINE();
     for (const g of u.guns) {
       const gp = sim.gunPos(u, g);
@@ -1024,7 +1091,7 @@ function drawWorld() {
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5 / cam.scale; ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (u.team === MINE()) {
+    if (u.team === MINE() && !crowd) {
       const num = sim.units.filter(v => v.team === u.team).indexOf(u) + 1; // matches keys 1-6
       ctx.fillStyle = '#5b6880';
       ctx.font = (12 / cam.scale) + 'px system-ui';
@@ -1034,7 +1101,7 @@ function drawWorld() {
 
   // Lock lines (your ships, every gun): colour = entry quality, strength = current lock.
   for (const u of sim.units) {
-    if (u.team !== MINE() || u.state !== 'alive') continue;
+    if (u.team !== MINE() || u.state !== 'alive' || !focusOnly(u)) continue;
     for (const g of u.guns) {
       if (g.targetId < 0) continue;
       const t = sim.units[g.targetId];
@@ -1553,7 +1620,38 @@ if (NET) {
   document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
   document.getElementById('btnTutorial').addEventListener('click', () => startBattle('tutorial'));
 }
+for (const b of document.querySelectorAll('#stressRow button')) b.addEventListener('click', () => {
+  stressCount = +b.dataset.count;
+  if (NET) { SFX.unlock(); SFX.ui(); hideOverlays(); act({ type: 'restart', newSeed: true, mode: 'stress', count: stressCount }); }
+  else startBattle('stress');
+});
+if (NET) document.getElementById('stressRow').firstChild.textContent = 'NEW: STRESS TEST + WEATHER for everyone (ships): ';
 document.getElementById('btnGarage').addEventListener('click', openGarage);
+
+// Performance readout: shown in the stress test, or any time with G.
+function updatePerf() {
+  const on = perfShow || sim.mode === 'stress';
+  perfEl.classList.toggle('show', on);
+  if (!on) return;
+  const cls = (v, bad) => '<span class="' + (v > bad ? 'bad' : 'ok') + '">';
+  const alive = sim.units.filter(u => u.state === 'alive').length;
+  let t = 'SCREEN   ' + cls(60 - fps, 15) + fps.toFixed(0) + ' fps</span> · draw ' + cls(frameMs, 16) + frameMs.toFixed(1) + ' ms</span>' +
+          (wxVisible() ? ' (weather ' + wxRenderer.stats.ms.toFixed(1) + ')' : '') + '\n';
+  if (NET && netPerf) {
+    const p = netPerf;
+    t += 'SERVER   ' + p.alive + '/' + p.ships + ' ships · tick ' + cls(p.stepMs, p.budgetMs * 0.6) + p.stepMs + ' ms</span> (max ' + cls(p.stepMax, p.budgetMs) + p.stepMax + '</span>, budget ' + p.budgetMs + ')\n' +
+         '         ' + p.ticksPerSec + ' ticks/s · ' + (p.behind ? '<span class="bad">fell behind ' + p.behind + 'x</span>' : 'keeping up') + ' · weather ' + p.wxMs + ' ms · ' + p.mem + ' MB\n' +
+         'NETWORK  snapshot ' + p.snapKB + ' KB x ' + p.snapHz + '/s · to you ' + cls(p.perScreenKBs, 1500) + p.perScreenKBs + ' KB/s</span> · total ' + p.outKBs + ' KB/s · ' + p.screens + ' screens\n' +
+         'WEATHER  ' + p.wxKf + ' keyframes (' + p.wxLog + ' in log) · ships in zones ' + p.zones.join(' / ');
+  } else if (NET) {
+    t += 'SERVER   waiting for numbers…';
+  } else {
+    t += 'SIM      ' + alive + '/' + sim.units.length + ' ships · tick ' + cls(localStepMs, 20) + localStepMs.toFixed(1) + ' ms</span> (budget 33)\n' +
+         'WEATHER  ' + (wxAgent ? wxAgent.published : 0) + ' keyframes · baked ' + wxClient.stats.bakes + ' regions';
+  }
+  t += '\n         Z weather ' + (wxVisible() ? 'on' : 'off') + ' · G hide';
+  perfEl.innerHTML = t;
+}
 document.getElementById('garageBack').addEventListener('click', () => { SFX.ui(); showTitle(); });
 document.getElementById('menuBtn').addEventListener('click', e => { e.stopPropagation(); SFX.ui(); showTitle(); });
 document.getElementById('menuBtn').addEventListener('pointerdown', e => e.stopPropagation());
