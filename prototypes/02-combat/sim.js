@@ -386,6 +386,8 @@
     // Controllers: a seat per player (0-7); team = seat & 1 (even blue, odd red).
     // Single player is controller 0. Each controller holds one ship at a time.
     this.held = [-1, -1, -1, -1, -1, -1, -1, -1];
+    // Which controllers play each side; new ships are dealt to them in turn (setControllers).
+    this.ctlOf = [[PLAYER], [ENEMY]]; this._deal = [0, 0];
     this.aim = [0, 0, 0, 0, 0, 0, 0, 0];
     this.human = [true, false];
     // APM matching: ticks of each side's actions (grab / dodge / refocus) over
@@ -494,7 +496,7 @@
     const cls = CLASSES[clsName], id = this.units.length;
     const u = {
       id: id, cls: clsName, team: team,
-      owner: team, // the player commanding this ship (today: one player per side)
+      owner: this.ctlOf ? this.ctlOf[team][(this._deal[team]++) % this.ctlOf[team].length] : team, // the player who flies it
       rng: mulberry32((this.seed ^ Math.imul(id + 1, 0x9E3779B1)) >>> 0),
       x: x, y: y, heading: heading,
       momentum: 1, stallTimer: 0, crystallizeTimer: 0,
@@ -664,8 +666,25 @@
     const u = typeof cmd.unit === 'number' ? this.units[cmd.unit] : null;
     return u && u.team === team && u.state === ALIVE && this._mayFly(u, c) ? u : null;
   };
-  // Fleet Battle: you fly only your own fleet. Other modes: anyone on the side may fly any of its ships.
-  Sim.prototype._mayFly = function (u, c) { return this.mode !== 'fleet' || u.owner === c; };
+  // You fly only your own ships: in Fleet Battle your fleet, otherwise your share of your side's ships.
+  Sim.prototype._mayFly = function (u, c) { return u.owner === c; };
+  // The LAN server says which seats are taken. Each side's ships are dealt out
+  // between that side's players in turn (by ship id); a side nobody plays stays
+  // with its default controller (the AI flies it). Fleet Battle keeps its fleets.
+  Sim.prototype.setControllers = function (seats) {
+    for (const t of [PLAYER, ENEMY]) {
+      const list = seats.filter(k => (k & 1) === t).sort((a, b) => a - b);
+      this.ctlOf[t] = list.length ? list : [t];
+    }
+    if (this.mode === 'fleet') return;
+    const deal = [0, 0];
+    for (const u of this.units) {
+      const list = this.ctlOf[u.team], nu = list[(deal[u.team]++) % list.length];
+      if (u.owner !== nu && u.held) { u.held = false; if (this.held[u.heldBy] === u.id) this.held[u.heldBy] = -1; }
+      u.owner = nu;
+    }
+    this._deal = deal;
+  };
 
   // --- Destroy the Carrier: economy and building ---
   Sim.prototype.carrierOf = function (team) {

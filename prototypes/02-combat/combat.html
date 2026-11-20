@@ -195,6 +195,8 @@
   #hangarBar.show { display: flex; }
   #hangarBar button { padding: 5px 8px; font-size: 12px; border-radius: 8px; }
   #hangarBar button.next { border-color: #ffd76a; color: #ffd76a; }
+  #findBtn { position: absolute; top: 10px; left: calc(50% + 66px); z-index: 8; font-size: 12px; font-weight: 700; padding: 7px 10px;
+             border-radius: 20px; background: #2a2614; border: 1px solid #8a7a3a; color: #ffd76a; }
   /* Stress test */
   .stressRow { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 8px; color: #8fa3c8; font-size: 12px; letter-spacing: .08em; }
   .stressRow button { padding: 6px 10px; font-size: 13px; }
@@ -287,6 +289,7 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <div id="perf"></div>
+    <button id="findBtn" title="Find my ships (H)">⌖ MINE</button>
     <div id="hangarBar"></div>
     <button id="panelToggle">⚙</button>
     <button id="menuBtn">☰ MENU</button>
@@ -397,8 +400,9 @@ let netId = null, netLobby = null;
 const MINE = () => (myTeam < 0 ? 0 : myTeam);
 let myCtl = 0;           // this screen's player seat (controller); team = seat & 1
 const MYCTL = () => (myCtl < 0 ? 0 : myCtl);
-// Ships this screen may fly: its side's ships, and in Fleet Battle only its own fleet.
-const flyable = u => u.team === MINE() && (sim.mode !== 'fleet' || u.owner === MYCTL());
+// Ships this screen may fly: your share of your side (your fleet in Fleet Battle).
+const flyable = u => u.team === MINE() && u.owner === MYCTL();
+let pulseUntil = 0; // "find my ships" rings
 const THEIRS = () => 1 - MINE();
 function act(cmd) {
   if (!NET) { sim.command(cmd); return; }
@@ -709,6 +713,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
+  if (e.key === 'h' || e.key === 'H') findMine();
   if (e.key === 'z' || e.key === 'Z') { wxOn = !wxVisible(); updatePerf(); }
   if (e.key === 'g' || e.key === 'G') { perfShow = !perfShow; updatePerf(); }
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
@@ -924,7 +929,7 @@ function render(dtReal) {
   } else {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
     for (const u of sim.units) {
-      if (u.team !== MINE() || u.state === 'crystallized') continue;
+      if (!flyable(u) || u.state === 'crystallized') continue; // Fit frames YOUR ships
       x0 = Math.min(x0, u.x); y0 = Math.min(y0, u.y); x1 = Math.max(x1, u.x); y1 = Math.max(y1, u.y); n++;
     }
     if (n) {
@@ -1139,6 +1144,7 @@ function drawWorld() {
     const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
     ctx.translate(u.x, u.y);
+    if (myTeam >= 0 && u.team === MINE() && !flyable(u)) ctx.globalAlpha = 0.5; // a teammate's ship: dimmed so yours pop
 
     // Energy ring = health + ammo + boost, the only bar there is
     if (u.state === 'alive') {
@@ -1247,7 +1253,7 @@ function drawWorld() {
         ctx.fillText(String(num), bx, by + 0.5 * px);
         ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
       }
-      if (survivalTime < 4) {
+      if (survivalTime < 4 || performance.now() < pulseUntil) {
         const ph = (performance.now() / 600) % 1;
         ctx.beginPath(); ctx.arc(u.x, u.y, r + (10 + 26 * ph) * px, 0, 7);
         ctx.strokeStyle = 'rgba(255,215,106,' + (0.8 * (1 - ph)).toFixed(3) + ')'; ctx.lineWidth = 3 * px; ctx.stroke();
@@ -1915,6 +1921,10 @@ hangarBar.addEventListener('pointerdown', e => {
   const f = sim.fleets.find(g => g.ctl === MYCTL()); if (f) f.next = +b.dataset.n; // show it straight away
   hangarKey = ''; SFX.select();
 });
+
+// Find my ships: frame them (Fit camera) and pulse their gold rings.
+function findMine() { setCamMode('fit'); pulseUntil = performance.now() + 2500; SFX.select(); }
+document.getElementById('findBtn').addEventListener('pointerdown', e => { e.stopPropagation(); findMine(); });
 
 for (const b of document.querySelectorAll('#stressRow button')) b.addEventListener('click', () => {
   stressCount = +b.dataset.count;

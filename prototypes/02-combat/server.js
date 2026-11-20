@@ -75,6 +75,7 @@ function startSimService(bus, opts) {
     sim = new Sim(seed, overrides, null, { mode: mode, song: song, count: count,
                                            fleets: Object.keys(fleets).filter(k => seated[k]).map(k => Object.assign({}, fleets[k], { ctl: +k })) });
     sim.human = humans.slice();
+    sim.setControllers(seated.map((on, k) => (on ? k : -1)).filter(k => k >= 0));
     pendingEvents = [];
     newWeather();
   }
@@ -89,6 +90,7 @@ function startSimService(bus, opts) {
     seated[seat] = !!msg.human;
     humans[team] = seated.some((on, k) => on && (k & 1) === team);
     sim.setHuman(team, humans[team]);
+    sim.setControllers(seated.map((on, k) => (on ? k : -1)).filter(k => k >= 0)); // re-deal the side's ships
   });
   // Flying and building: one subject per seat.
   bus.subscribe('cmd.*', (cmd, subject) => {
