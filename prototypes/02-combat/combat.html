@@ -139,6 +139,32 @@
   #tut .row { display: flex; gap: 8px; justify-content: flex-end; }
   #tut .wait { color: #e8c34a; font-size: 12px; margin-right: auto; align-self: center; }
   @media (max-height: 500px) { #tut { top: 46px; padding: 8px 10px; } #tut .msg { font-size: 12px; margin: 4px 0 6px; } }
+  /* Beat mode: planning screen + lane lights */
+  #plan { background: rgba(8,10,16,.97); }
+  #plan .wrap { max-width: 980px; margin: 0 auto; padding: 16px 16px 40px; }
+  #plan header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  #plan h2 { margin: 0; letter-spacing: .2em; font-size: 20px; color: #cdd6e4; }
+  #plan .songs { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+  #plan .songs button.on { background: #3a4a6a; border-color: #9fd0ff; color: #fff; }
+  #plan .hint { color: #8fa3c8; font-size: 12px; margin: 6px 0 10px; }
+  .laneRow { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: stretch; margin: 6px 0;
+             background: rgba(16,20,29,.9); border: 1px solid #263248; border-radius: 10px; padding: 8px; }
+  .laneRow.hot { border-color: #9fd0ff; background: rgba(40,60,100,.6); }
+  .laneRow .lname { display: flex; flex-direction: column; justify-content: center; font-weight: 700; letter-spacing: .08em; }
+  .laneRow .lname small { color: #8fa3c8; font-weight: 400; letter-spacing: 0; font-size: 11px; }
+  .laneRow canvas { width: 100%; height: 22px; display: block; }
+  .laneRow .chips { display: flex; flex-wrap: wrap; gap: 5px; min-height: 30px; margin-top: 6px; }
+  .chip { padding: 5px 9px; border-radius: 14px; background: #23304a; border: 1px solid #3a4a6a; font-size: 12px; font-weight: 600;
+          cursor: grab; user-select: none; touch-action: none; }
+  .chip.sel { border-color: #ffd76a; color: #ffd76a; }
+  .chip.drag { position: fixed; z-index: 60; pointer-events: none; opacity: .9; }
+  #plan .go { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+  #plan .go button { padding: 12px 18px; font: 700 15px system-ui; letter-spacing: .1em; border-radius: 10px; }
+  #lanes { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 8; display: none; gap: 4px;
+           background: rgba(16,20,29,.85); border: 1px solid #2e3a52; border-radius: 10px; padding: 4px 6px; font-size: 10px; }
+  #lanes.show { display: flex; }
+  #lanes span { padding: 3px 6px; border-radius: 6px; color: #8fa3c8; transition: background .06s; }
+  #lanes b { color: #cdd6e4; padding: 3px 6px; }
   #menuBtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 8; font-weight: 700;
              letter-spacing: .12em; padding: 7px 14px; border-radius: 8px; background: rgba(16,20,29,.85); }
 </style>
@@ -153,10 +179,12 @@
     <div class="menu">
       <button id="btnPlay" class="primary">SKIRMISH</button>
       <button id="btnCarrier">DESTROY THE CARRIER</button>
+      <button id="btnBeat">BEAT BATTLE</button>
       <button id="btnTutorial">TUTORIAL</button>
       <button id="btnGarage">GARAGE</button>
     </div>
-    <div class="sound">🔊 <input type="range" id="volIn" min="0" max="1" step="0.05"> <button id="muteBtn">Mute</button></div>
+    <div class="sound">🔊 <input type="range" id="volIn" min="0" max="1" step="0.05"> <button id="muteBtn">Mute</button>
+      ♪ <input type="range" id="musIn" min="0" max="1" step="0.05" title="Music volume (Beat Battle)"></div>
     <div class="tips">Select a ship (click it or 1–9), click the map to send it · drag a ship to steer ·
       Space dodge · T retarget · C camera · M mute · Destroy the Carrier: Q W E A S D build</div>
   </div>
@@ -170,6 +198,16 @@
     <div class="note">Names, roles and numbers are prototype placeholders. Stats come live from the game's class table,
       so they always match what's in the battle. Firepower = damage per second at base fire rate.</div>
     <div class="cards" id="cards" style="margin-top:12px"></div>
+  </div>
+</div>
+<div id="plan" class="overlay">
+  <div class="wrap">
+    <header><h2>BEAT BATTLE · PLAN</h2><button id="planBack">◀ MENU</button></header>
+    <div class="songs" id="planSongs"></div>
+    <div class="hint">Each ship only moves, reloads and fires during the time its lane's notes give it. Busy lanes = more ship-time.
+      Drag a ship onto a lane (or tap a ship, then tap a lane). The bars show where each lane plays across the loop.</div>
+    <div id="planLanes"></div>
+    <div class="go"><button id="planPreview">▶ PREVIEW SONG</button><button id="planStart" class="primary">START BATTLE</button></div>
   </div>
 </div>
 <div id="banner"><h2 id="bannerText"></h2><div style="color:#cdd6e4" id="bannerSub"></div>
@@ -186,6 +224,7 @@
     <div id="hud"></div>
     <button id="panelToggle">⚙</button>
     <button id="menuBtn">☰ MENU</button>
+    <div id="lanes"></div>
     <div id="buildBar"></div>
     <div id="tut"><div class="step" id="tutStep"></div><div class="msg" id="tutMsg"></div>
       <div class="row"><span class="wait" id="tutWait"></span><button id="tutSkip">Skip tutorial</button><button id="tutNext">Next ▶</button></div></div>
@@ -263,7 +302,8 @@
 <script>
 'use strict';
 if (typeof CombatSim === 'undefined') window.__showErr('sim.js did not load (CombatSim missing)');
-const { Sim, TUNABLES, CLASSES, BUILDABLE, mulberry32 } = CombatSim;
+const { Sim, TUNABLES, CLASSES, BUILDABLE, SONGS, LANES, mulberry32 } = CombatSim;
+const LANE_COL = { kick: '#ff6a55', snare: '#ffb03c', hat: '#ffe36a', bass: '#b98cff', keys: '#5adcff', crash: '#ffffff' };
 const BUILD_KEYS = ['q', 'w', 'e', 'a', 's', 'd'];
 
 let seed = 4242;
@@ -310,7 +350,9 @@ for (const key in TUNABLES) {
   });
 }
 
-let gameMode = 'skirmish'; // 'skirmish' | 'carrier' | 'tutorial'
+let gameMode = 'skirmish'; // 'skirmish' | 'carrier' | 'tutorial' | 'beat'
+let beatSong = 'assault';
+let planLanes = {}; // beat mode: ship id -> lane chosen on the planning screen
 let bannerShown = false;
 const TUTORIAL_ROSTER = [
   { cls: 'fighter', team: 0 }, { cls: 'heavy', team: 0 }, { cls: 'capital', team: 0 },
@@ -320,7 +362,8 @@ function restart(newSeed) {
   if (NET) { act({ type: 'restart', newSeed: !!newSeed }); return; }
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   if (gameMode === 'tutorial') sim = new Sim(seed, Object.assign({}, overrides, { spawnDist: 470, aiApmMatch: 0.4 }), TUTORIAL_ROSTER);
-  else sim = new Sim(seed, overrides, null, { mode: gameMode });
+  else sim = new Sim(seed, overrides, null, { mode: gameMode, song: beatSong });
+  if (gameMode === 'beat') for (const id in planLanes) if (sim.units[id] && sim.units[id].team === 0) sim.units[id].lane = planLanes[id];
   bannerShown = false; document.getElementById('banner').classList.remove('show');
   selected = -1;
   survivalTime = 0;
@@ -501,7 +544,7 @@ cv.addEventListener('pointercancel', endPointer);
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
   // Menus up: only Enter (start) and M (mute) do anything.
-  if (titleEl.classList.contains('show') || garageEl.classList.contains('show')) {
+  if (titleEl.classList.contains('show') || garageEl.classList.contains('show') || document.getElementById('plan').classList.contains('show')) {
     if (e.key === 'Enter' && titleEl.classList.contains('show')) startBattle(NET ? undefined : 'skirmish');
     if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
     return;
@@ -570,6 +613,9 @@ function pushFlashes(events) {
       if (e.team === MINE()) { SFX.built(); const u = sim.units[e.unit]; if (u) floatText(u.x, u.y, 'NEW ' + (SHIP_INFO[e.cls] || {}).name, '#cfe8ff'); }
     } else if (e.type === 'salvage') {
       if (e.team === MINE()) { SFX.salvage(); floatText(e.x, e.y, '+$' + e.value, '#ffd76a'); }
+    } else if (e.type === 'note') {
+      SFX.music(e.lane, e.v, e.p);
+      laneFlash[e.lane] = performance.now();
     } else if (e.type === 'victory') {
       if (e.team === MINE()) SFX.victory(); else SFX.defeat();
     }
@@ -726,6 +772,7 @@ function render(dtReal) {
 
   ctx.fillStyle = '#0b0e14';
   ctx.fillRect(0, 0, W, H);
+  const restorePos = smoothForDraw(dtReal);
   updateConeVisibility();
   drawWorld();
 
@@ -804,7 +851,9 @@ function render(dtReal) {
     (carrierMode || gameMode === 'tutorial' ? '' :
      mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — ' + again + '</div>' :
      foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — ' + again + '</div>' : '');
+  restorePos();
   updateBuildBar();
+  updateLaneLights();
   if (carrierMode && sim.winner >= 0 && !bannerShown) showBanner(sim.winner === MINE() ? 'VICTORY' : 'DEFEAT',
     sim.winner === MINE() ? 'The enemy carrier is destroyed.' : 'Your carrier was destroyed.', sim.winner === MINE() ? '#5fd08a' : '#e85a4a');
 }
@@ -1082,6 +1131,20 @@ function drawWorld() {
     ctx.stroke();
   }
 
+  // Beat mode: a ship in its time slice glows in its lane's colour; a waiting ship is dimmed.
+  if (sim.song) for (const u of sim.units) {
+    if (u.state !== 'alive' || u.hidden) continue;
+    const rr = sim.T.unitRadius * CLASSES[u.cls].size + 6;
+    ctx.beginPath(); ctx.arc(u.x, u.y, rr, 0, 7);
+    if (u.activeLeft > 0) {
+      ctx.strokeStyle = LANE_COL[u.lane] || '#fff';
+      ctx.globalAlpha = 0.35 + 0.65 * Math.min(1, u.activeLeft / sim.T.beatSliceSec);
+      ctx.lineWidth = 3 / cam.scale; ctx.stroke(); ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = 'rgba(11,14,20,0.55)'; ctx.fill();
+    }
+  }
+
   // Turn-to lines: your released ships still coming about to the direction you set.
   for (const u of sim.units) {
     if (u.team !== MINE() || u.state !== 'alive' || u.held || u.goal === null || !sim.human[u.team]) continue;
@@ -1219,6 +1282,7 @@ function showTitle() {
   // Attract mode offline: both sides AI while the menu is up.
   if (!NET) { sim.setHuman(0, false); selected = -1; }
   stopTutorial();
+  if (typeof closePlan === 'function') closePlan();
   document.getElementById('banner').classList.remove('show');
 }
 function hideOverlays() { titleEl.classList.remove('show'); garageEl.classList.remove('show'); if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; } }
@@ -1229,11 +1293,141 @@ function startBattle(mode) {
     if (mode) act({ type: 'restart', newSeed: true, mode: mode });
   } else {
     gameMode = mode || 'skirmish';
+    if (gameMode === 'beat') { planLanes = {}; restart(true); setPaused(true); openPlan(); return; }
     restart(true); setPaused(false);
     if (gameMode === 'tutorial') startTutorial(); else stopTutorial();
   }
   SFX.sting();
 }
+
+// ---- Beat mode: smooth movement, lane lights, planning screen ----
+// Ships only move during their slices, so on screen each ship glides toward its
+// true position instead of hopping (render-only; the sim keeps the real one).
+function smoothForDraw(dt) {
+  if (!sim.song) return () => {};
+  const k = 1 - Math.exp(-dt * 8), saved = [];
+  for (const u of sim.units) {
+    if (u._sx === undefined || Math.hypot(u.x - u._sx, u.y - u._sy) > 200) { u._sx = u.x; u._sy = u.y; }
+    u._sx += (u.x - u._sx) * k; u._sy += (u.y - u._sy) * k;
+    saved.push(u.x, u.y);
+    u.x = u._sx; u.y = u._sy;
+  }
+  return () => { let i = 0; for (const u of sim.units) { u.x = saved[i++]; u.y = saved[i++]; } };
+}
+const laneFlash = {};
+const lanesEl = document.getElementById('lanes');
+function updateLaneLights() {
+  const on = !!sim.song && !titleEl.classList.contains('show') && !document.getElementById('plan').classList.contains('show');
+  lanesEl.classList.toggle('show', on);
+  if (!on) return;
+  if (lanesEl.dataset.song !== sim.songId) {
+    lanesEl.dataset.song = sim.songId;
+    lanesEl.innerHTML = '<b>♪ ' + sim.song.name + ' ' + sim.song.bpm + '</b>' + LANES.map(l => '<span data-l="' + l + '">' + l.toUpperCase() + '</span>').join('');
+  }
+  const now = performance.now();
+  for (const el of lanesEl.querySelectorAll('span')) {
+    const age = now - (laneFlash[el.dataset.l] || 0), lit = age < 120;
+    el.style.background = lit ? LANE_COL[el.dataset.l] : 'transparent';
+    el.style.color = lit ? '#0b0e14' : '#8fa3c8';
+  }
+}
+
+const planEl = document.getElementById('plan');
+let planSel = -1, previewTimer = null;
+function myShips() { return sim.units.filter(u => u.team === MINE() && u.state === 'alive'); }
+function setLane(u, lane) {
+  u.lane = lane; planLanes[u.id] = lane;
+  act({ type: 'lane', unit: u.id, lane: lane });
+  SFX.select();
+  renderPlan();
+}
+function openPlan() {
+  hideOverlays(); planEl.classList.add('show'); planSel = -1; renderPlan();
+}
+function closePlan() { planEl.classList.remove('show'); stopPreview(); }
+function renderPlan() {
+  const songs = document.getElementById('planSongs');
+  songs.innerHTML = Object.keys(SONGS).map(id => '<button data-song="' + id + '"' + (id === (sim.songId || beatSong) ? ' class="on"' : '') + '>' +
+    SONGS[id].name + ' · ' + SONGS[id].bpm + ' BPM</button>').join('');
+  const sg = sim.song || SONGS[beatSong];
+  const box = document.getElementById('planLanes');
+  box.innerHTML = LANES.map(l => '<div class="laneRow" data-lane="' + l + '"><div class="lname" style="color:' + LANE_COL[l] + '">' + l.toUpperCase() +
+    '<small>' + Math.round(sg.share[l] * 100) + '% of steps · ' + (sg.share[l] * 16 * 0.25).toFixed(1) + 's/bar max</small></div>' +
+    '<div><canvas width="640" height="22" data-lane="' + l + '"></canvas><div class="chips">' +
+    myShips().filter(u => u.lane === l).map(u => '<span class="chip' + (u.id === planSel ? ' sel' : '') + '" data-u="' + u.id + '">' +
+      shipNum(u) + ' ' + (SHIP_INFO[u.cls] || {}).name + '</span>').join('') + '</div></div></div>').join('');
+  for (const cv2 of box.querySelectorAll('canvas')) {
+    const g = cv2.getContext('2d'), hits = sg.hits[cv2.dataset.lane], w = cv2.width / hits.length;
+    g.fillStyle = '#1c2536'; g.fillRect(0, 0, cv2.width, cv2.height);
+    for (let b = 0; b < hits.length; b += 16) { g.fillStyle = '#2e3a52'; g.fillRect(b * w, 0, 1, cv2.height); }
+    hits.forEach((h, i) => { if (h) { g.fillStyle = LANE_COL[cv2.dataset.lane]; g.globalAlpha = h.v; g.fillRect(i * w + 1, 3, Math.max(2, w - 2), 16); g.globalAlpha = 1; } });
+  }
+}
+function shipNum(u) { return sim.units.filter(v => v.team === u.team).indexOf(u) + 1; }
+// Drag a chip onto a lane (mouse or touch); a tap selects it, then tapping a lane moves it.
+let dragChip = null;
+planEl.addEventListener('pointerdown', e => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  e.preventDefault();
+  const ghost = chip.cloneNode(true); ghost.classList.add('drag'); document.body.appendChild(ghost);
+  dragChip = { id: +chip.dataset.u, ghost: ghost, x0: e.clientX, y0: e.clientY, moved: false };
+  ghost.style.left = (e.clientX + 6) + 'px'; ghost.style.top = (e.clientY + 6) + 'px';
+});
+window.addEventListener('pointermove', e => {
+  if (!dragChip) return;
+  if (Math.hypot(e.clientX - dragChip.x0, e.clientY - dragChip.y0) > 6) dragChip.moved = true;
+  dragChip.ghost.style.left = (e.clientX + 6) + 'px'; dragChip.ghost.style.top = (e.clientY + 6) + 'px';
+  for (const r of planEl.querySelectorAll('.laneRow')) r.classList.toggle('hot', r.contains(document.elementFromPoint(e.clientX, e.clientY)));
+});
+window.addEventListener('pointerup', e => {
+  if (!dragChip) return;
+  const d = dragChip; dragChip = null; d.ghost.remove();
+  for (const r of planEl.querySelectorAll('.laneRow')) r.classList.remove('hot');
+  if (!d.moved) { planSel = planSel === d.id ? -1 : d.id; renderPlan(); return; }
+  const row = document.elementFromPoint(e.clientX, e.clientY);
+  const lane = row && row.closest('.laneRow') && row.closest('.laneRow').dataset.lane;
+  if (lane) setLane(sim.units[d.id], lane);
+});
+planEl.addEventListener('click', e => {
+  const sb = e.target.closest('button[data-song]');
+  if (sb) {
+    SFX.unlock(); SFX.ui();
+    beatSong = sb.dataset.song;
+    if (NET) act({ type: 'restart', newSeed: false, mode: 'beat', song: beatSong });
+    else { restart(false); setPaused(true); }
+    if (previewTimer) { stopPreview(); startPreview(); }
+    renderPlan();
+    return;
+  }
+  const row = e.target.closest('.laneRow');
+  if (row && planSel >= 0 && !e.target.closest('.chip')) { setLane(sim.units[planSel], row.dataset.lane); planSel = -1; renderPlan(); }
+});
+function startPreview() {
+  SFX.unlock();
+  const sg = sim.song || SONGS[beatSong];
+  let step = 0;
+  previewTimer = setInterval(() => {
+    for (const l of LANES) { const h = sg.hits[l][step % sg.steps]; if (h) { SFX.music(l, h.v, h.p); laneFlash[l] = performance.now(); } }
+    step++;
+  }, sg.stepSec * 1000);
+  document.getElementById('planPreview').textContent = '■ STOP PREVIEW';
+}
+function stopPreview() {
+  if (previewTimer) clearInterval(previewTimer);
+  previewTimer = null;
+  document.getElementById('planPreview').textContent = '▶ PREVIEW SONG';
+}
+document.getElementById('planPreview').addEventListener('click', () => { if (previewTimer) stopPreview(); else startPreview(); });
+document.getElementById('planStart').addEventListener('click', () => {
+  closePlan(); SFX.unlock(); SFX.sting();
+  if (!NET) setPaused(false);
+});
+document.getElementById('planBack').addEventListener('click', () => { closePlan(); SFX.ui(); showTitle(); });
+planEl.addEventListener('pointerdown', e => e.stopPropagation());
+// Tap the lane bar mid-battle to re-plan (single player pauses while you do).
+lanesEl.style.cursor = 'pointer';
+lanesEl.addEventListener('pointerdown', e => { e.stopPropagation(); if (!NET) setPaused(true); openPlan(); });
 
 // ---- Build bar (Destroy the Carrier) ----
 const buildBar = document.getElementById('buildBar');
@@ -1336,7 +1530,10 @@ function openGarage() {
   if (!garageAnim) garageAnim = requestAnimationFrame(drawGarage);
 }
 const volIn = document.getElementById('volIn'), muteBtn = document.getElementById('muteBtn');
-function syncSound() { volIn.value = SFX.volume; muteBtn.textContent = SFX.muted ? 'Unmute' : 'Mute'; }
+const musIn = document.getElementById('musIn');
+musIn.addEventListener('input', e => { SFX.unlock(); SFX.setMusicVolume(parseFloat(e.target.value)); });
+musIn.addEventListener('change', () => SFX.music('snare', 0.8, 0));
+function syncSound() { musIn.value = SFX.musicVolume; volIn.value = SFX.volume; muteBtn.textContent = SFX.muted ? 'Unmute' : 'Mute'; }
 volIn.addEventListener('input', e => { SFX.unlock(); SFX.setVolume(parseFloat(e.target.value)); });
 volIn.addEventListener('change', () => SFX.ui());
 muteBtn.addEventListener('click', () => { SFX.unlock(); SFX.setMuted(!SFX.muted); syncSound(); SFX.ui(); });
@@ -1348,7 +1545,10 @@ if (NET) {
   document.getElementById('btnPlay').addEventListener('click', () => startBattle());
   document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
   document.getElementById('btnTutorial').addEventListener('click', () => startBattle('skirmish'));
+  document.getElementById('btnBeat').textContent = 'NEW: BEAT BATTLE (everyone)';
+  document.getElementById('btnBeat').addEventListener('click', () => { SFX.unlock(); act({ type: 'restart', newSeed: true, mode: 'beat', song: beatSong }); hideOverlays(); setTimeout(openPlan, 400); });
 } else {
+  document.getElementById('btnBeat').addEventListener('click', () => startBattle('beat'));
   document.getElementById('btnPlay').addEventListener('click', () => startBattle('skirmish'));
   document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
   document.getElementById('btnTutorial').addEventListener('click', () => startBattle('tutorial'));

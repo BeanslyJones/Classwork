@@ -8,11 +8,13 @@
 (function (root) {
   'use strict';
   let ctx = null, master = null, dry = null, verbSend = null, noiseBuf = null;
-  let volume = 0.7, muted = false;
+  let volume = 0.7, muted = false, musicVol = 0.6;
   try {
     const v = parseFloat(localStorage.getItem('rw.sfx.volume'));
     if (v >= 0 && v <= 1) volume = v;
     muted = localStorage.getItem('rw.sfx.muted') === '1';
+    const mvs = parseFloat(localStorage.getItem('rw.music.volume'));
+    if (mvs >= 0 && mvs <= 1) musicVol = mvs;
   } catch (e) {}
 
   function init() {
@@ -206,6 +208,32 @@
       const d = out(0, 0.45, 0.6), t = ctx.currentTime;
       [392, 330, 262, 196].forEach((f, i) => tone(d, 'sawtooth', f, f * 0.97, t + i * 0.18, .01, .8, .18));
       tone(d, 'sine', 55, 35, t, .02, 2.2, .55);
+    },
+    // Beat mode music: one call per note the song plays (lane, velocity 0-1, MIDI pitch).
+    music(lane, v, p) {
+      if (!ready()) return;
+      const t = ctx.currentTime, mv = musicVol * (v || 1);
+      const d = out(0, mv, lane === 'crash' || lane === 'keys' ? 0.35 : 0.12);
+      const hz = n => 440 * Math.pow(2, (n - 69) / 12);
+      if (lane === 'kick') { tone(d, 'sine', 160, 42, t, .002, .28, .95); noise(d, 'lowpass', 1200, 200, .7, t, .001, .02, .35); }
+      else if (lane === 'snare') { noise(d, 'bandpass', 1900, 1500, .9, t, .001, .16, .6); tone(d, 'triangle', 210, 160, t, .001, .08, .4); }
+      else if (lane === 'hat') noise(d, 'highpass', 8000, 8000, .7, t, .001, .035, .35);
+      else if (lane === 'crash') noise(d, 'highpass', 5000, 3500, .5, t, .002, 1.3, .45);
+      else if (lane === 'bass') {
+        const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+        o.type = 'sawtooth'; o.frequency.value = hz(p || 36);
+        f.type = 'lowpass'; f.Q.value = 6; f.frequency.setValueAtTime(900, t); f.frequency.exponentialRampToValueAtTime(160, t + .22);
+        env(g.gain, t, .55, .004, .26);
+        o.connect(f); f.connect(g); g.connect(d); o.start(t); o.stop(t + .32);
+      } else if (lane === 'keys') {
+        tone(d, 'triangle', hz(p || 60), hz(p || 60), t, .004, .42, .32);
+        tone(d, 'sine', hz((p || 60) + 12), hz((p || 60) + 12), t, .004, .25, .12);
+      }
+    },
+    get musicVolume() { return musicVol; },
+    setMusicVolume(v) {
+      musicVol = Math.max(0, Math.min(1, v));
+      try { localStorage.setItem('rw.music.volume', String(musicVol)); } catch (e) {}
     },
     order() {
       if (!ready()) return;

@@ -65,6 +65,19 @@ Volume/mute on the title screen, M toggles mute.
 - **Tutorial**: 12 guided steps in a small battle; each waits for you to do
   the move (select, order, drag, retarget, dodge, camera) and ends with a fight.
 
+## Beat Battle (music-driven)
+
+Title → **BEAT BATTLE**. Before the fight, a planning screen shows the song:
+one row per instrument lane (kick, snare, hat, bass, keys, crash) with how much
+of the loop it plays and a note timeline. Drag a ship onto a lane, or tap the
+ship and then the lane. Pick a song (Assault 124 BPM, Drift 96 BPM) and
+preview it. In battle, each note gives the ships on its lane a time slice; they
+move, reload and fire only inside that slice, on their own cooldowns. Active
+ships glow in their lane's colour and waiting ships are dimmed. Ships glide on
+screen between slices. The lane bar under the menu lights up per note; tap it to
+re-plan. The music is synthesized live (music volume in sound settings). It works
+over LAN as well: **NEW: BEAT BATTLE (everyone)**.
+
 ## LAN multiplayer
 
 1. On any computer on your Wi-Fi (Node.js installed, nothing else needed):
