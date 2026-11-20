@@ -80,6 +80,7 @@
     salvageFrac:     { value: 0.4,   min: 0,   max: 1,    tooltip: 'Destroy the Carrier: a wreck is worth this fraction of the dead ship\'s cost. Any ship that flies over it collects it.' },
     wreckSec:        { value: 45,    min: 5,   max: 300,  tooltip: 'Seconds a wreck stays before drifting off.' },
     maxShips:        { value: 16,    min: 4,   max: 60,   tooltip: 'Destroy the Carrier: most ships a side may have at once (carrier and Grayzer included).' },
+    beatSliceSec:    { value: 0.25,  min: 0.03, max: 1,   tooltip: 'Beat mode: ship-seconds a note gives the ships on its lane (they move, reload and fire only while their slice runs).' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -151,6 +152,64 @@
   const BUILDABLE = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo'];
   const isCapitalHull = cls => !!(CLASSES[cls].turret || CLASSES[cls].noGuns); // big ships: capital ordnance + weak points
 
+  // --- Beat mode: songs are note sheets every player and server shares, so a
+  // note never needs sending over the network — only which ship is on which lane.
+  // Each bar is 16 sixteenth-note steps: 'x' = hit (accent), 'o' = softer hit,
+  // '.' = rest. Pitched lanes (bass, keys) carry a note number per hit.
+  const LANES = ['kick', 'snare', 'hat', 'bass', 'keys', 'crash'];
+  const DEFAULT_LANE = { capital: 'kick', carrier: 'kick', heavy: 'snare', bomber: 'snare', fighter: 'hat',
+                         interceptor: 'hat', torpedo: 'bass', aaa: 'keys' };
+  const SONGS = {
+    assault: {
+      name: 'Assault', bpm: 124,
+      bars: {
+        kick:  ['x...x...x...x...', 'x...x...x...x...', 'x...x...x...x...', 'x...x...x.x.x.x.'],
+        snare: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.xx'],
+        hat:   ['x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxxxxxxxxx'],
+        bass:  ['x..x..x...x..x..', 'x..x..x...x..x..', 'x..x..x...x..x..', 'x..x..x.x.x.x...'],
+        keys:  ['x...x.x...x.x...', '..x...x.x...x...', 'x...x.x...x.x...', 'x.x.x.x.x.x.x.x.'],
+        crash: ['x...............', '................', '................', '................'],
+      },
+      pitch: { bass: [36, 36, 39, 41, 36, 34, 36, 39], keys: [60, 63, 67, 70, 67, 63, 72, 70] },
+    },
+    drift: {
+      name: 'Drift', bpm: 96,
+      bars: {
+        kick:  ['x.........x.....', 'x.........x..x..', 'x.........x.....', 'x.....x...x...x.'],
+        snare: ['........x.......', '........x.......', '........x.......', '........x...o.o.'],
+        hat:   ['x.o.x.o.x.o.x.o.', 'x.o.x.o.x.o.x.o.', 'x.o.x.o.x.o.x.o.', 'x.o.x.o.x.xxx.o.'],
+        bass:  ['x.......x.......', 'x.......x...x...', 'x.......x.......', 'x...x...x...x...'],
+        keys:  ['x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.xxxxxxxx'],
+        crash: ['x...............', '................', '................', '........x.......'],
+      },
+      pitch: { bass: [33, 33, 31, 28], keys: [57, 60, 64, 69, 64, 60, 62, 65] },
+    },
+  };
+  // Precompute each song: per lane, the hit (if any) at every step of the loop.
+  for (const id in SONGS) {
+    const sg = SONGS[id], bars = sg.bars.kick.length;
+    sg.steps = bars * 16;
+    sg.stepSec = 60 / sg.bpm / 4;
+    sg.hits = {};
+    sg.share = {};
+    for (const lane of LANES) {
+      const arr = new Array(sg.steps).fill(0);
+      let n = 0, k = 0;
+      (sg.bars[lane] || []).forEach((bar, b) => {
+        for (let i = 0; i < 16; i++) {
+          const ch = bar[i];
+          if (ch === 'x' || ch === 'o') {
+            const pitches = sg.pitch && sg.pitch[lane];
+            arr[b * 16 + i] = { v: ch === 'x' ? 1 : 0.6, p: pitches ? pitches[k++ % pitches.length] : 0 };
+            n++;
+          }
+        }
+      });
+      sg.hits[lane] = arr;
+      sg.share[lane] = n / sg.steps; // fraction of steps this lane plays
+    }
+  }
+
   function mulberry32(seed) {
     let a = seed >>> 0;
     return function () {
@@ -219,6 +278,10 @@
     this.T = {};
     for (const k in TUNABLES) this.T[k] = TUNABLES[k].value;
     if (this.mode === 'carrier') { this.T.arenaRadius = 820; this.T.spawnDist = 430; }
+    // Beat mode: the song is the shared clock that hands ships their time.
+    this.song = this.mode === 'beat' ? (SONGS[opts && opts.song] || SONGS.assault) : null;
+    this.songId = this.song ? ((opts && SONGS[opts.song]) ? opts.song : 'assault') : null;
+    this.beatStep = -1;
     if (overrides) for (const k in overrides) {
       if (!(k in this.T)) throw new Error('unknown tunable: ' + k);
       this.T[k] = overrides[k];
@@ -337,6 +400,9 @@
       state: ALIVE, held: false,
       weak: (cls.weakPoints || []).map(w => ({ type: w.type, x: w.x, y: w.y, r: w.r, hp: this.T.weakHp, out: false })),
       battery: cls.battery ? cls.battery.max * this.T.batteryScale : 0,
+      lane: DEFAULT_LANE[clsName] || 'kick', // beat mode: the instrument that gives this ship its time
+      activeLeft: 0,   // beat mode: ship-seconds left in the current slice
+      shipTime: 0,     // beat mode: total ship-seconds this ship has had
     };
     // Guns: turrets carry their own state; a fixed-gun ship's one gun is itself.
     if (cls.turrets) {
@@ -430,6 +496,12 @@
         u.retargetTick = this.tick; // the next lock this ship takes is a retarget (cue)
         this.events.push({ type: 'refocus', unit: u.id, team: team, tick: this.tick });
         this.actions[team].push(this.tick);
+      } else if (cmd.type === 'lane') {
+        // Beat mode: put one of your ships on an instrument lane.
+        const u = this.units[cmd.unit];
+        if (!u || u.team !== team || LANES.indexOf(cmd.lane) < 0) continue;
+        u.lane = cmd.lane;
+        this.events.push({ type: 'lane', unit: u.id, lane: u.lane, team: team, tick: this.tick });
       } else if (cmd.type === 'build') {
         this._queueBuild(team, cmd.cls);
       }
@@ -783,6 +855,14 @@
     }
 
     const cls = CLASSES[u.cls];
+    // Beat mode: a ship only lives through the time its lane gives it. Between
+    // notes it is frozen in place — no movement, no reloading, no firing — but it
+    // can still be hit. Its cooldowns run on ship-time, not on the music.
+    if (this.song) {
+      if (u.activeLeft <= 0) { u.vx = 0; u.vy = 0; return; }
+      u.activeLeft -= dt;
+      u.shipTime += dt;
+    }
     if (u.beingShotTimer > 0) u.beingShotTimer -= dt;
     if (u.lockoutTimer > 0) u.lockoutTimer -= dt;
 
@@ -918,6 +998,24 @@
     this.events.length = 0;
     this._applyCommands();
 
+    // --- Beat mode: when the song reaches a new step, every lane that plays on
+    // it hands its ships a time slice. Shared song + tick = same on every machine.
+    if (this.song) {
+      const sg = this.song, step = Math.floor(this.tick * dt / sg.stepSec);
+      if (step !== this.beatStep) {
+        this.beatStep = step;
+        const at = step % sg.steps;
+        for (const lane of LANES) {
+          const hit = sg.hits[lane][at];
+          if (!hit) continue;
+          this.events.push({ type: 'note', lane: lane, step: at, v: hit.v, p: hit.p, tick: this.tick });
+          for (const u of this.units) {
+            if (u.state === ALIVE && u.lane === lane) u.activeLeft = Math.max(u.activeLeft, T.beatSliceSec * hit.v);
+          }
+        }
+      }
+    }
+
     // --- AI action budget: each AI side earns re-aims at its matched APM and
     // spends one per action on the ship it re-aimed longest ago. ---
     for (let t = 0; t < 2; t++) {
@@ -928,6 +1026,7 @@
       let pick = null;
       for (const u of this.units) {
         if (u.team !== t || u.state !== ALIVE) continue;
+        if (this.song && u.activeLeft <= 0) continue; // beat mode: only a ship that's in its slice can act
         if (!pick || u.decTick < pick.decTick) pick = u;
       }
       if (pick) { this.aiPick[t] = pick.id; pick.decTick = this.tick; this.aiBudget[t] -= 1; }
@@ -1057,6 +1156,7 @@
       CLASS_LIST.indexOf(u.cls), u.team,
       u.guns[0] === u ? 0 : u.guns.map(gunSnap),
       r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
+      LANES.indexOf(u.lane), r3(u.activeLeft),
     ]);
     const proj = [];
     for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
@@ -1067,7 +1167,7 @@
       events: events || [],
       apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
       aiApm: [Math.round(this.aiApm(0)), Math.round(this.aiApm(1))],
-      mode: this.mode, money: this.money.map(Math.floor), winner: this.winner,
+      mode: this.mode, money: this.money.map(Math.floor), winner: this.winner, song: this.songId,
       queue: this.queue.map(q => q.map(j => [j.cls, r2(j.left)])),
       wrecks: this.wrecks.map(w => [r2(w.x), r2(w.y), w.value, r2(w.ttl)]),
     };
@@ -1096,6 +1196,8 @@
       if (Array.isArray(a[17])) a[17].forEach((ga, k) => { if (u.guns[k] && u.guns[k] !== u) gunApply(u.guns[k], ga); });
       if (a[18] !== undefined) u.battery = a[18];
       u.charging = a[19] ? snap.tick : -10;
+      if (a[20] !== undefined && a[20] >= 0) u.lane = LANES[a[20]];
+      if (a[21] !== undefined) u.activeLeft = a[21];
       u.hidden = false;
     });
     while (this.projectiles.length < snap.proj.length && this._growPool(1024)) { /* grow to fit */ }
@@ -1109,6 +1211,7 @@
     this.events = snap.events;
     this._netApm = snap.apm; this._netAiApm = snap.aiApm;
     if (snap.mode) this.mode = snap.mode;
+    if (snap.song && SONGS[snap.song] && this.songId !== snap.song) { this.song = SONGS[snap.song]; this.songId = snap.song; }
     if (snap.money) this.money = snap.money;
     if (snap.winner !== undefined) this.winner = snap.winner;
     if (snap.queue) this.queue = snap.queue.map(q => q.map(j => ({ cls: j[0], left: j[1] })));
@@ -1122,7 +1225,7 @@
         '$' + this.money.map(m => m.toFixed(2)).join(',') + 'w' + this.wrecks.length + 'q' + this.queue.map(q => q.length).join(','));
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
-          ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.battery.toFixed(3));
+          ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.battery.toFixed(3) + ',' + u.lane + u.activeLeft.toFixed(4));
       for (const g of u.guns) mix(g.gunAngle.toFixed(4) + ',' + g.targetId + ',' + g.lockQ.toFixed(4));
       for (const w of u.weak) mix(w.type + w.hp.toFixed(2));
       if (u.goal !== null) mix('g' + u.goal.toFixed(4));
@@ -1134,5 +1237,6 @@
   };
 
   return { Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
+           SONGS: SONGS, LANES: LANES, DEFAULT_LANE: DEFAULT_LANE,
            mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
 });

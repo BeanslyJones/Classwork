@@ -543,6 +543,40 @@ function wrapA2(x) { while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) 
   assert(viewer.units.filter(u => !u.hidden).length === near.units.length, 'a client hides ships it was not sent');
 }
 
+// --- 5o. Beat mode: notes hand ships time slices; cooldowns run on ship time. ---
+{
+  console.log('\n[beat mode]');
+  const { SONGS } = require('./sim.js');
+  const s = new Sim(SEED, {}, null, { mode: 'beat', song: 'assault' });
+  const byCls = c => s.units.find(u => u.team === PLAYER && u.cls === c);
+  const hat = byCls('fighter'), kick = byCls('capital');
+  assert(hat.lane === 'hat' && kick.lane === 'kick', 'ships start on their class default lanes');
+  for (let t = 0; t < TICK_RATE * 8; t++) s.step();
+  assert(hat.shipTime > kick.shipTime * 1.5, 'a busy lane gives its ships more ship-time (hat ' + hat.shipTime.toFixed(1) + 's vs kick ' + kick.shipTime.toFixed(1) + 's in 8s)');
+  assert(hat.shipTime < 8 + 1e-6 && kick.shipTime < 8, 'ships only live through the time their notes give them');
+  // A frozen ship (no note) neither moves nor reloads.
+  const s2 = new Sim(SEED, {}, null, { mode: 'beat', song: 'drift' });
+  const f2 = s2.units.find(u => u.team === PLAYER && u.cls === 'fighter');
+  f2.lane = 'crash'; // crash plays almost never (once at the very start of the loop)
+  for (let t = 0; t < 12; t++) s2.step(); // let that opening slice run out
+  const x0 = f2.x, cd0 = f2.cooldown;
+  for (let t = 0; t < 20; t++) s2.step();
+  assert(f2.activeLeft <= 0 && f2.x === x0 && f2.cooldown === cd0, 'between notes a ship is frozen: no movement, no reloading');
+  // Lane command: own ships only, valid lanes only.
+  s2.command({ type: 'lane', unit: f2.id, lane: 'keys' });
+  const foe = s2.units.find(u => u.team === ENEMY);
+  s2.command({ type: 'lane', unit: foe.id, lane: 'crash' });
+  s2.command({ type: 'lane', unit: f2.id, lane: 'nope' });
+  s2.step();
+  assert(f2.lane === 'keys' && foe.lane !== 'crash', 'a side can only put its own ships on lanes');
+  // Same battle whichever order ships think in.
+  const a = new Sim(SEED, {}, null, { mode: 'beat' }), b = new Sim(SEED, {}, null, { mode: 'beat' });
+  b._reverseThink = true;
+  for (let t = 0; t < 2000; t++) { a.step(); b.step(); }
+  assert(a.stateHash() === b.stateHash(), 'beat mode is order-independent too (2000 ticks)');
+  assert(Object.keys(SONGS).length >= 2 && SONGS.assault.share.hat > SONGS.assault.share.kick, 'songs carry per-lane note shares for the planning screen');
+}
+
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------
 {
   console.log('\n[dodge]');

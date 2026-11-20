@@ -119,6 +119,16 @@ function get(port, path) {
   assert(srv.sim.queue[0].length + srv.sim.units.length > before, 'blue can order a build from its carrier');
   assert(a.lastSnap.money && a.lastSnap.money.length === 2, 'snapshots carry both sides\' money');
 
+  // Beat mode over LAN: switch mode + song, move a ship to another lane.
+  await post(port, a.hello.id, { type: 'restart', mode: 'beat', song: 'drift' });
+  await wait(250);
+  assert(srv.sim.mode === 'beat' && srv.sim.songId === 'drift', 'any player can start beat mode with a chosen song');
+  const myShip = srv.sim.units.find(u => u.team === 0);
+  await post(port, a.hello.id, { type: 'lane', unit: myShip.id, lane: 'keys' });
+  await wait(150);
+  assert(srv.sim.units[myShip.id].lane === 'keys', 'a player can put their ship on a lane');
+  assert(a.lastSnap && a.lastSnap.song === 'drift', 'snapshots say which song is playing');
+
   // Snapshots stay in step with the server sim.
   const t0 = a.lastSnap.tick;
   await wait(400);

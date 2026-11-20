@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { Sim, TUNABLES } = require('./sim.js');
+const { Sim, TUNABLES, SONGS } = require('./sim.js');
 const { createBus } = require('./bus.js');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
@@ -28,15 +28,16 @@ const SNAP_HZ = 30;
 const ROOT = __dirname;
 const STATIC = { '/combat.html': 'text/html; charset=utf-8', '/sim.js': 'text/javascript; charset=utf-8', '/sfx.js': 'text/javascript; charset=utf-8' };
 // Events screens need for effects and sound (everything else stays server-side).
-const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus']);
-const MODES = ['skirmish', 'carrier'];
-const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order']);
+const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus', 'note', 'lane']);
+const MODES = ['skirmish', 'carrier', 'beat'];
+const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order', 'lane']);
 
 // ---------------------------------------------------------------- SIM service
 function startSimService(bus, opts) {
   let seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   let overrides = {};
   let mode = 'skirmish';
+  let song = 'assault';
   let sim = null;
   let speed = 0.5, paused = false;
   const humans = [false, false];
@@ -44,12 +45,12 @@ function startSimService(bus, opts) {
   const interest = opts.interestRadius > 0 ? opts.interestRadius : 0;
 
   function newSim() {
-    sim = new Sim(seed, overrides, null, { mode: mode });
+    sim = new Sim(seed, overrides, null, { mode: mode, song: song });
     sim.human = humans.slice();
     pendingEvents = [];
   }
   newSim();
-  const settings = () => ({ speed: speed, paused: paused, seed: seed, overrides: overrides, mode: mode });
+  const settings = () => ({ speed: speed, paused: paused, seed: seed, overrides: overrides, mode: mode, song: song });
   const publishSettings = () => bus.publish('sim.settings', settings());
 
   // Seats: the gateway tells us which sides a person is flying.
@@ -63,7 +64,8 @@ function startSimService(bus, opts) {
     const team = +subject.split('.')[1];
     if (!(team === 0 || team === 1) || !cmd || typeof cmd.type !== 'string') return;
     if (FLY.has(cmd.type)) {
-      sim.command({ type: cmd.type, unit: Number.isInteger(cmd.unit) ? cmd.unit : undefined, angle: +cmd.angle, team: team });
+      sim.command({ type: cmd.type, unit: Number.isInteger(cmd.unit) ? cmd.unit : undefined, angle: +cmd.angle,
+                    lane: typeof cmd.lane === 'string' ? cmd.lane : undefined, team: team });
     } else if (cmd.type === 'build' && typeof cmd.cls === 'string') {
       sim.command({ type: 'build', cls: cmd.cls, team: team });
     }
@@ -81,6 +83,7 @@ function startSimService(bus, opts) {
       case 'restart':
         if (cmd.newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
         if (MODES.indexOf(cmd.mode) >= 0) mode = cmd.mode;
+        if (typeof cmd.song === 'string' && SONGS[cmd.song]) song = cmd.song;
         newSim();
         publishSettings();
         return bus.publish('sim.restarted', settings());
