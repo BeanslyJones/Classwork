@@ -327,7 +327,7 @@
 <script>
 'use strict';
 if (typeof CombatSim === 'undefined') window.__showErr('sim.js did not load (CombatSim missing)');
-const { Sim, TUNABLES, CLASSES, BUILDABLE, SONGS, LANES, mulberry32, iconRadius } = CombatSim;
+const { Sim, TUNABLES, CLASSES, BUILDABLE, SONGS, LANES, mulberry32, iconRadius, lockZoneRadius } = CombatSim;
 const LANE_COL = { kick: '#ff6a55', snare: '#ffb03c', hat: '#ffe36a', bass: '#b98cff', keys: '#5adcff', crash: '#ffffff' };
 const BUILD_KEYS = ['q', 'w', 'e', 'a', 's', 'd'];
 
@@ -1162,7 +1162,7 @@ function drawWorld() {
       ctx.restore();
     }
     if (t && t.state === 'alive') {
-      const rr = iconRadius(sim.T, t.cls); // solid ring = 100% zone (the whole ship), dashed = where the lock runs out
+      const rr = lockZoneRadius(sim.T, t.cls); // solid ring = 100% zone (the health ring and inside), dashed = 1%
       ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2 / cam.scale; ctx.stroke();
       ctx.beginPath(); ctx.arc(t.x, t.y, rr + sim.T.lockCatch, 0, 7); ctx.setLineDash([3 / cam.scale, 5 / cam.scale]);
       ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke(); ctx.setLineDash([]);
@@ -1257,6 +1257,14 @@ function drawWorld() {
     const dormant = p.kind === 3 && p.arm > 0 && p.target < 0;
     if (dormant && p.team !== MINE()) continue;
     ctx.globalAlpha = dormant ? 0.35 : 1;
+    if (p.kind === 3) { // torpedo search cone: dashed while dormant (yours only), solid once hunting
+      const head = Math.atan2(p.vy, p.vx), R = sim.T.torpedoSearch;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.arc(p.x, p.y, R, head - 1.0, head + 1.0); ctx.closePath();
+      ctx.fillStyle = p.team === 0 ? 'rgba(159,208,255,0.06)' : 'rgba(255,159,138,0.07)'; ctx.fill();
+      if (dormant) ctx.setLineDash([5 / cam.scale, 5 / cam.scale]);
+      ctx.strokeStyle = p.team === 0 ? 'rgba(159,208,255,0.45)' : 'rgba(255,140,120,0.55)'; ctx.lineWidth = 1.2 / cam.scale; ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (p.kind === 1 || p.kind === 2) { // missile: white dart + smoke; rocket: hot orange streak
       const sp = Math.hypot(p.vx, p.vy) || 1, L = p.kind === 1 ? 18 : 24;
       ctx.beginPath();

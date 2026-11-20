@@ -95,7 +95,7 @@
     torpedoTurn:     { value: 1.3,   min: 0.1, max: 5,    tooltip: 'How hard an active torpedo turns toward its target.' },
     torpedoReload:   { value: 4.0,   min: 0.5, max: 15,   tooltip: 'Seconds between torpedoes.' },
     lockIconSpeed:   { value: 150,   min: 20,  max: 500,  tooltip: 'Lock icon speed (units/s) on a yellow lock. Green is slower, red and white faster.' },
-    lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Lock is 100% with the icon anywhere on the target ship, falling to 0 this far beyond its edge.' },
+    lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Lock is 100% with the icon inside the target\'s health ring, falling to 1% this far beyond it (0 past that).' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -183,6 +183,8 @@
     const k = clsName === 'bomber' || clsName === 'heavy' || clsName === 'torpedo' ? 1.3 : clsName === 'interceptor' ? 0.8 : 1;
     return T.unitRadius * CLASSES[clsName].size * k;
   }
+  // The health ring sits 7 units outside the icon: anywhere inside it is a 100% lock.
+  function lockZoneRadius(T, clsName) { return iconRadius(T, clsName) + 8.5; }
   const GRADE_SPEED = [1.7, 1.7, 1.0, 0.55]; // icon speed by lock grade: none, red, yellow, green
   const GRADE_LOCK = [0, 0.5, 0.8, 1];      // how much a caught lock is worth by grade
   const CLASS_LIST = Object.keys(CLASSES); // stable order: network class codes
@@ -783,10 +785,10 @@
     const ix = u.x + m.lx * c - m.ly * sn, iy = u.y + m.lx * sn + m.ly * c;
     let lock = 0;
     const t = m.target >= 0 ? this.units[m.target] : null;
-    // 100% anywhere on the target's icon; falls off from its edge out to lockCatch beyond it.
+    // 100% anywhere inside the target's health ring; falls to 1% at lockCatch beyond it, 0 past that.
     if (t && t.state === ALIVE) {
-      const edge = Math.max(0, Math.hypot(t.x - ix, t.y - iy) - iconRadius(this.T, t.cls));
-      lock = Math.max(0, 1 - edge / this.T.lockCatch) * GRADE_LOCK[m.grade];
+      const edge = Math.max(0, Math.hypot(t.x - ix, t.y - iy) - lockZoneRadius(this.T, t.cls));
+      lock = (edge <= this.T.lockCatch ? 1 - 0.99 * edge / this.T.lockCatch : 0) * GRADE_LOCK[m.grade];
     }
     // Fly toward the icon (a perfectly caught lock flies at the target itself).
     const ax = lock > 0 ? t.x : ix, ay = lock > 0 ? t.y : iy;
@@ -1457,7 +1459,7 @@
     return (h >>> 0).toString(16);
   };
 
-  return { iconRadius: iconRadius, Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
+  return { iconRadius: iconRadius, lockZoneRadius: lockZoneRadius, Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
            SONGS: SONGS, LANES: LANES, DEFAULT_LANE: DEFAULT_LANE,
            mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
 });
