@@ -1087,6 +1087,10 @@ function drawWorld() {
   // you're flying or have selected, so the picture (and the frame rate) holds up.
   const crowd = sim.units.length > 60;
   const focusOnly = u => !crowd || u.held || u.id === selected;
+  // Hotkey numbers 1-9 for the ships you can fly (same order as the number keys).
+  const hotNum = new Map();
+  { let n = 0; for (const v of sim.units) if (flyable(v)) { n++; if (n <= 9) hotNum.set(v.id, n); } }
+  const px = 1 / cam.scale; // one screen pixel in world units
   ctx.save();
   ctx.translate(cam.ox, cam.oy);
   ctx.scale(cam.scale, cam.scale);
@@ -1225,11 +1229,29 @@ function drawWorld() {
       ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5 / cam.scale; ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (u.team === MINE() && !crowd) {
-      const num = sim.units.filter(v => v.team === u.team).indexOf(u) + 1; // matches keys 1-6
-      ctx.fillStyle = '#5b6880';
-      ctx.font = (12 / cam.scale) + 'px system-ui';
-      ctx.fillText(String(num), u.x + r + 4, u.y - r - 4);
+    // YOURS: a gold chevron over every ship you can fly, a big hotkey badge, and a
+    // pulsing ring for the first seconds of a battle so you find them at once.
+    if (u.state === 'alive' && flyable(u) && myTeam >= 0) {
+      const top = u.y - r - 8 * px;
+      ctx.beginPath();
+      ctx.moveTo(u.x - 8 * px, top - 9 * px); ctx.lineTo(u.x, top); ctx.lineTo(u.x + 8 * px, top - 9 * px);
+      ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 3 * px; ctx.lineJoin = 'round'; ctx.stroke();
+      const num = hotNum.get(u.id);
+      if (num) {
+        const bx = u.x + r + 12 * px, by = u.y - r - 12 * px;
+        ctx.beginPath(); ctx.arc(bx, by, 11 * px, 0, 7);
+        ctx.fillStyle = '#ffd76a'; ctx.fill();
+        ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 2 * px; ctx.stroke();
+        ctx.fillStyle = '#0b0e14'; ctx.font = 'bold ' + (15 * px) + 'px system-ui';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(num), bx, by + 0.5 * px);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
+      if (survivalTime < 4) {
+        const ph = (performance.now() / 600) % 1;
+        ctx.beginPath(); ctx.arc(u.x, u.y, r + (10 + 26 * ph) * px, 0, 7);
+        ctx.strokeStyle = 'rgba(255,215,106,' + (0.8 * (1 - ph)).toFixed(3) + ')'; ctx.lineWidth = 3 * px; ctx.stroke();
+      }
     }
   }
 
