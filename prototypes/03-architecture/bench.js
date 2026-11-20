@@ -110,6 +110,25 @@ assert(on.mean <= off.mean * 1.10, 'gating adds no real overhead (on ' + on.mean
   assert(a.stateHash() === b.stateHash(), '100-unit gated sim stays deterministic (3000 ticks)');
 }
 
+// Scale: the two-phase tick + spatial grid at 1000 ships (500v500, small ships,
+// spread over a big arena, nobody dies). Must fit a 30 Hz tick with room to spare.
+let scale1k;
+{
+  const names = ['fighter', 'bomber', 'heavy', 'interceptor', 'aaa', 'torpedo'];
+  const roster = [];
+  for (let i = 0; i < 500; i++) roster.push({ cls: names[i % names.length], team: PLAYER }, { cls: names[i % names.length], team: ENEMY });
+  const s = new Sim(SEED, { arenaRadius: 4000, momentumDrain: 0, driftNoise: 0.4 }, roster);
+  for (const u of s.units) { const a = s.rng() * Math.PI * 2, d = 200 + s.rng() * 3600; u.x = Math.cos(a) * d; u.y = Math.sin(a) * d; u.heading = s.rng() * Math.PI * 2; u.energy = 1e9; }
+  for (let t = 0; t < 100; t++) s.step();
+  const samples = [];
+  for (let t = 0; t < 600; t++) { const t0 = process.hrtime.bigint(); s.step(); samples.push(Number(process.hrtime.bigint() - t0) / 1e6); }
+  samples.sort((x, y) => x - y);
+  scale1k = { mean: samples.reduce((x, y) => x + y, 0) / samples.length, p99: samples[Math.floor(samples.length * 0.99)], dropped: s.poolStats.dropped };
+  console.log('1000 ships: mean ' + scale1k.mean.toFixed(2) + 'ms  p99 ' + scale1k.p99.toFixed(2) + 'ms  dropped shots ' + scale1k.dropped);
+  assert(scale1k.mean < budget * 0.6, '1000 ships: mean tick well inside the 30Hz budget (' + scale1k.mean.toFixed(2) + 'ms)');
+  assert(scale1k.dropped === 0, '1000 ships: the projectile pool grows instead of dropping shots');
+}
+
 // --- Record the baseline ---
 const md = `# Architecture baseline — build order step 3
 
@@ -127,6 +146,9 @@ ${row(on)}
 
 Tier split at end (gating ON, Active/Reduced/Dormant): ${on.tiers.join('/')}.
 Projectile pool: ${on.fired} fired, 0 dropped, zero allocations after construction.
+
+Scale (two-phase tick + spatial grid): **1000 ships** (500v500) mean ${'$'}{scale1k.mean.toFixed(2)} ms,
+p99 ${'$'}{scale1k.p99.toFixed(2)} ms per tick, ${'$'}{scale1k.dropped} dropped shots. (The old all-pairs sim took ~74 ms.)
 
 Gate: **stable tick time @ 100 units** — p99 under half the 30 Hz budget, worst
 tick inside one frame, deterministic with gating engaged. See bench assertions.

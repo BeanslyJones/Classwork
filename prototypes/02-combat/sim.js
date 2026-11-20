@@ -13,6 +13,19 @@
 //
 // Modes: 'skirmish' (fixed 6v6) and 'carrier' (Destroy the Carrier: each side
 // has a carrier that builds ships with money earned per second plus salvage).
+//
+// Scaling architecture (built to be shardable, Massdrift-style):
+//  - Two-phase tick. THINK: every ship reads a frozen frame of the world as it
+//    was at the start of the tick and writes only to itself; anything that
+//    touches another ship (a shot, a battery recharge, a wreck) becomes an
+//    intent. RESOLVE: intents are applied in ship-id order. So the result never
+//    depends on which order (or on which machine) ships were thought about.
+//  - Each ship has its own RNG stream, so its randomness doesn't depend on who
+//    was processed before it.
+//  - Every neighbour query (targets, cones, battery, collisions, blasts) goes
+//    through a spatial grid instead of all-pairs loops.
+//  - Ships carry an owner (the player who commands them) — the unit a shard
+//    would own.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.CombatSim = factory();
@@ -148,6 +161,26 @@
     };
   }
 
+  // Uniform spatial hash grid: cell -> ids. Rebuilt each tick.
+  function Grid(cell) { this.cell = cell; this.map = new Map(); }
+  Grid.prototype.clear = function () { this.map.clear(); };
+  Grid.prototype.key = function (cx, cy) { return (cx + 32768) * 65536 + (cy + 32768); };
+  Grid.prototype.insert = function (id, x, y) {
+    const k = this.key(Math.floor(x / this.cell), Math.floor(y / this.cell));
+    let b = this.map.get(k);
+    if (!b) { b = []; this.map.set(k, b); }
+    b.push(id);
+  };
+  // Calls fn(id) for every id in cells overlapping the circle (caller checks distance).
+  Grid.prototype.query = function (x, y, r, fn) {
+    const c = this.cell, x0 = Math.floor((x - r) / c), x1 = Math.floor((x + r) / c);
+    const y0 = Math.floor((y - r) / c), y1 = Math.floor((y + r) / c);
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+      const b = this.map.get(this.key(cx, cy));
+      if (b) for (let i = 0; i < b.length; i++) fn(b[i]);
+    }
+  };
+
   const TAU = Math.PI * 2;
   function wrapAngle(a) { while (a > Math.PI) a -= TAU; while (a < -Math.PI) a += TAU; return a; }
   function turnToward(current, target, maxStep) {
@@ -252,13 +285,26 @@
     }
 
     // Projectile pool. Fixed-capacity free list; nothing allocates per shot.
-    const CAP = 1024; // ~3x the bullets in flight since guns went rapid-fire
-    this.projectiles = new Array(CAP);
-    for (let i = 0; i < CAP; i++) {
-      this.projectiles[i] = { active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1 };
-    }
+    // Free-list pool: O(1) to take a slot, grows in chunks if a huge battle
+    // fills it (up to MAX_PROJECTILES), so large fleets don't silently lose shots.
+    this.projectiles = [];
+    this._free = [];
+    this._growPool(1024);
     this.poolStats = { fired: 0, dropped: 0 };
+    this.grid = new Grid(256);  // start-of-tick positions (THINK reads)
+    this.gridNow = new Grid(64); // post-move positions (projectile hits, blasts)
+    this.frame = [];
   }
+
+  const MAX_PROJECTILES = 65536;
+  Sim.prototype._growPool = function (n) {
+    const start = this.projectiles.length, end = Math.min(MAX_PROJECTILES, start + n);
+    for (let i = start; i < end; i++) {
+      this.projectiles.push({ i: i, active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1 });
+    }
+    for (let i = end - 1; i >= start; i--) this._free.push(i); // lowest index handed out first
+    return end > start;
+  };
 
   function newGun(heading, mount, cooldown) {
     return { gunAngle: heading + mount, targetId: -1, outOfConeTime: 0, cooldown: cooldown,
@@ -271,6 +317,8 @@
     const cls = CLASSES[clsName], id = this.units.length;
     const u = {
       id: id, cls: clsName, team: team,
+      owner: team, // the player commanding this ship (today: one player per side)
+      rng: mulberry32((this.seed ^ Math.imul(id + 1, 0x9E3779B1)) >>> 0),
       x: x, y: y, heading: heading,
       momentum: 1, stallTimer: 0, crystallizeTimer: 0,
       goal: null, // heading a released ship is still turning toward (no snap turns)
@@ -526,12 +574,11 @@
     return Math.abs(wrapAngle(Math.atan2(dy, dx) - (u.heading + g.mount))) <= g.traverse + cls.coneHalf;
   };
 
-  Sim.prototype._fireProjectile = function (u, angle, g) {
+  Sim.prototype._fireProjectile = function (u, angle, g, from) {
     const cls = CLASSES[u.cls];
-    let p = null;
-    for (const q of this.projectiles) if (!q.active) { p = q; break; }
-    if (!p) { this.poolStats.dropped++; return; } // pool exhausted: drop, never allocate
-    const from = this.gunPos(u, g || u);
+    if (!this._free.length && !this._growPool(this.projectiles.length)) { this.poolStats.dropped++; return; }
+    const p = this.projectiles[this._free.pop()];
+    from = from || this.gunPos(u, g || u);
     p.active = true;
     p.x = from.x; p.y = from.y;
     p.vx = Math.cos(angle) * cls.projSpeed; p.vy = Math.sin(angle) * cls.projSpeed;
@@ -564,9 +611,15 @@
   };
 
   Sim.prototype._detonate = function (p) {
+    if (p.active && p.i !== undefined) this._free.push(p.i);
     p.active = false;
     this.events.push({ type: 'detonation', x: p.x, y: p.y, aoe: p.aoe, big: p.damage >= 25 || p.vsCap > 1, tick: this.tick });
-    for (const u of this.units) {
+    const hits = [];
+    if (this._gridLive) this.gridNow.query(p.x, p.y, p.aoe + this.maxHullR, id => hits.push(id));
+    else for (const u of this.units) hits.push(u.id); // called outside a tick (tests/tools): no grid yet
+    hits.sort((a, b) => a - b); // fixed order regardless of grid bucket layout
+    for (const id of hits) {
+      const u = this.units[id];
       if (u.state !== ALIVE) continue;
       if (u.team === p.team && !this.T.friendlyFire) continue; // FF is a separate toggle, off
       const ur = this.T.unitRadius * CLASSES[u.cls].size;
@@ -594,16 +647,21 @@
   // (leading the target as the lock improves), traverse, and fire.
   Sim.prototype._gunnery = function (u, g, gi, cls, dt, bridgeOut) {
     const T = this.T, isTurret = g !== u;
-    // Track cone entry ticks for first-to-enter priority.
-    for (const v of this.units) {
-      if (v.team === u.team || v.state !== ALIVE) { delete g.entered[v.id]; continue; }
-      const inZone = this._canAcquire(u, v, g);
-      if (inZone && g.entered[v.id] === undefined) g.entered[v.id] = this.tick;
-      if (!inZone) delete g.entered[v.id];
+    // Track cone entry ticks for first-to-enter priority (other ships read from
+    // the frozen frame; candidates come from the spatial grid).
+    const F = this.frame, pos0 = this.gunPos(u, g);
+    for (const k in g.entered) {
+      const v = F[k];
+      if (!v || !v.alive || !this._canAcquire(u, v, g)) delete g.entered[k];
     }
+    this.grid.query(pos0.x, pos0.y, cls.coneRange, id => {
+      const v = F[id];
+      if (!v.alive || v.team === u.team || g.entered[id] !== undefined) return;
+      if (this._canAcquire(u, v, g)) g.entered[id] = this.tick;
+    });
     // Validate / acquire target. First to enter the cone wins and keeps priority.
-    let target = g.targetId >= 0 ? this.units[g.targetId] : null;
-    if (target && target.state !== ALIVE) { target = null; g.targetId = -1; g.lockQ = 0; }
+    let target = g.targetId >= 0 ? F[g.targetId] : null;
+    if (target && !target.alive) { target = null; g.targetId = -1; g.lockQ = 0; }
     if (target) {
       if (this._canAcquire(u, target, g)) g.outOfConeTime = 0;
       else {
@@ -619,7 +677,7 @@
         if (et < bestTick || (et === bestTick && +id < best)) { bestTick = et; best = +id; }
       }
       if (best >= 0) {
-        target = this.units[best];
+        target = F[best];
         g.targetId = best; g.outOfConeTime = 0;
         // Freeze entry quality: how far off the arc centre (or turret barrel) it came in.
         const off = Math.abs(wrapAngle(Math.atan2(target.y - pos.y, target.x - pos.x) - g.gunAngle));
@@ -663,11 +721,10 @@
         // Fixed guns can only nudge the shot within their arc; turrets fire down the barrel.
         const base = isTurret ? g.gunAngle
           : g.gunAngle + Math.max(-cls.coneHalf, Math.min(cls.coneHalf, wrapAngle(aimAngle - g.gunAngle)));
-        const angle = base + (this.rng() * 2 - 1) * spread;
-        this._fireProjectile(u, angle, g);
+        const angle = base + (u.rng() * 2 - 1) * spread;
+        this._fires.push({ u: u, g: g, gi: gi, angle: angle, spread: spread, x: pos.x, y: pos.y }); // spawned in RESOLVE
         u.energy -= cls.shotCost; // shooting spends the pool that is also your health
-        g.cooldown = cls.cooldown;
-        this.events.push({ type: 'fired', unit: u.id, gun: gi, target: g.targetId, spread: spread, lockQ: g.lockQ, tick: this.tick });
+        g.cooldown = cls.cooldown; // 'fired' event is emitted in RESOLVE with the shot
       }
     }
   };
@@ -677,16 +734,183 @@
   Sim.prototype._battery = function (u, cls, dt) {
     const b = cls.battery, k = this.T.batteryScale;
     u.battery = Math.min(b.max * k, u.battery + b.recharge * k * dt);
-    for (const v of this.units) {
+    const F = this.frame, near = [];
+    this.grid.query(u.x, u.y, b.range, id => near.push(id));
+    near.sort((a, c) => a - c);
+    for (const id of near) {
       if (u.battery <= 0) break;
-      if (v === u || v.team !== u.team || v.state !== ALIVE) continue;
+      const v = F[id];
+      if (id === u.id || v.team !== u.team || !v.alive) continue;
       const vmax = CLASSES[v.cls].energyMax;
       if (v.energy >= vmax) continue;
       if (Math.hypot(v.x - u.x, v.y - u.y) > b.range) continue;
       const give = Math.min(b.rate * k * dt, vmax - v.energy, u.battery);
-      v.energy += give; u.battery -= give;
-      v.charging = this.tick;
+      u.battery -= give;
+      this._charges.push({ to: id, from: u.id, amount: give }); // applied in RESOLVE
     }
+  };
+
+  // The nearest enemy for an AI ship to go after (from the frozen frame).
+  // Anti-capital ships treat capitals and carriers as much closer than they are.
+  Sim.prototype._aiTarget = function (u, cls) {
+    const F = this.frame, huntCapitals = !!cls.vsCapital;
+    let best = null, bestD = Infinity;
+    const consider = id => {
+      const v = F[id];
+      if (!v.alive || v.team === u.team) return;
+      const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && v.capital ? 0.25 : 1);
+      if (d < bestD || (d === bestD && id < best.id)) { bestD = d; best = v; }
+    };
+    for (const r of [600, 1600]) { this.grid.query(u.x, u.y, r, consider); if (best && bestD <= r) return best; }
+    for (let id = 0; id < F.length; id++) consider(id); // far away: fall back to everyone
+    return best;
+  };
+
+  // THINK for one ship: steering, movement and gun decisions. Reads other ships
+  // only through this.frame (the world at the start of the tick); writes only to
+  // itself; anything aimed at another ship is pushed as an intent.
+  Sim.prototype._think = function (u) {
+    const T = this.T, dt = this.dt;
+    if (u.state === CRYSTALLIZED) return;
+    if (u.state === CRYSTALLIZING) {
+      u.crystallizeTimer += dt;
+      if (u.crystallizeTimer >= T.crystallizeSec) {
+        u.state = CRYSTALLIZED;
+        this._deaths.push(u); // its crystal / salvage wreck is placed in RESOLVE
+        this.events.push({ type: 'crystallized', unit: u.id, tick: this.tick });
+      }
+      return;
+    }
+
+    const cls = CLASSES[u.cls];
+    if (u.beingShotTimer > 0) u.beingShotTimer -= dt;
+    if (u.lockoutTimer > 0) u.lockoutTimer -= dt;
+
+    // Knocked-out weak points keep costing the capital.
+    let cripple = 1;
+    if (u.weak.length) {
+      let vents = 0;
+      for (const w of u.weak) if (w.out && w.type === 'vent') vents++;
+      if (vents) { this._damage(u, vents * T.ventLeak * dt, 'breach'); if (u.state !== ALIVE) return; }
+      if (this._weakFlag(u, 'engine')) cripple = T.engineCripple;
+    }
+    if (cls.battery) this._battery(u, cls, dt);
+
+    // --- Steering. Every source of turning is capped by the hull's turn rate:
+    // current speed / turnRadius. No ship ever snaps to a new heading. ---
+    const juggles = this.human[u.team] && !cls.noStall; // carriers cruise steadily, never stall
+    const curSpeed = (juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed) * cripple;
+    const maxTurn = curSpeed / (cls.turnRadius * T.turnRadiusScale) * (u.tier === 1 ? 2 : 1); // rad/s (Reduced tier steps half as often)
+    const heading0 = u.heading;
+    if (u.dodgeTimer > 0) {
+      // Barrel roll: dead straight, no steering of any kind.
+      u.dodgeTimer -= dt;
+      if (u.dodgeTimer <= 0) u.lockoutTimer = T.dodgeLockoutSec;
+    } else if (u.held) {
+      if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], maxTurn * dt);
+    } else if (this.human[u.team]) {
+      // Unpossessed ship on a human-flown side: the juggle clock runs.
+      if (juggles) u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
+      if (u.goal !== null && u.lockoutTimer <= 0) {
+        u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
+        if (Math.abs(wrapAngle(u.goal - u.heading)) < 1e-3) u.goal = null;
+      }
+      if (juggles) u.heading += (u.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
+    } else {
+      // Opposition AI: same class table, seeks nearest player ship to gun range.
+      // It only re-aims a ship when it spends an action on it (APM-matched,
+      // see the budget above); in between the ship turns toward its last goal
+      // and flies on, just like a released player ship.
+      const decide = this.aiPick[u.team] === u.id;
+      if (u.goal !== null) u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
+      if (decide && cls.noGuns) {
+        // AI carrier: hold station behind its own line, circling.
+        const homeX = (u.team === PLAYER ? -1 : 1) * (T.spawnDist + 260);
+        const dx = homeX - u.x, dy = -u.y;
+        u.goal = Math.hypot(dx, dy) > 90 ? Math.atan2(dy, dx) : u.heading + Math.PI / 2;
+      } else if (u.tier < 2 && decide) {
+        let tgt = null, tgtD = Infinity;
+        const huntCapitals = !!cls.vsCapital;
+        for (const v of this.units) {
+          if (v.team === u.team || v.state !== ALIVE) return;
+          // Anti-capital ships treat capitals and carriers as much closer than they are.
+          const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && isCapitalHull(v.cls) ? 0.25 : 1);
+          if (d < tgtD) { tgtD = d; tgt = v; }
+        }
+        if (tgt) tgtD = Math.hypot(tgt.x - u.x, tgt.y - u.y);
+        if (tgt) {
+          const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
+          let want;
+          if (cls.turret) {
+            // Turret ship: close to range, then turn broadside so a side turret bears.
+            want = tgtD > cls.coneRange * 0.7 ? toTgt : toTgt + Math.PI / 2;
+          } else {
+            // Fixed guns: strafing runs. Nose on target; peel off when too
+            // close, swing back around for the next pass.
+            want = tgtD > cls.coneRange * 0.35 ? toTgt : toTgt + Math.PI * 0.6;
+          }
+          u.goal = want;
+        }
+      }
+    }
+
+    // Crystal evasion for everything unheld and not mid-roll. Only crystals
+    // ahead matter, and a ship that turns wide has to start turning early:
+    // look-ahead = avoidRange + its turn radius. It veers to whichever side
+    // the crystal isn't on, using its own hull turn rate.
+    if (!u.held && u.dodgeTimer <= 0 && T.avoidSteer > 0) {
+      const look = T.avoidRange + cls.turnRadius * T.turnRadiusScale;
+      let nearest = null, nearestGap = Infinity, nearestRel = 0;
+      for (const h of this.hazards) {
+        const dx = h.x - u.x, dy = h.y - u.y;
+        const rel = wrapAngle(Math.atan2(dy, dx) - u.heading);
+        if (Math.abs(rel) > Math.PI / 2) return; // behind us
+        const gap = Math.hypot(dx, dy) - h.r - T.unitRadius * cls.size;
+        if (gap < look && gap < nearestGap) { nearestGap = gap; nearest = h; nearestRel = rel; }
+      }
+      if (nearest) {
+        const away = u.heading - (nearestRel >= 0 ? 1 : -1) * Math.PI / 2;
+        const urgency = Math.min(1, 1.5 * (1 - Math.max(0, nearestGap) / look));
+        const str = juggles ? u.momentum : 1;
+        // Close call: evasion overrides whatever the pilot/AI was turning toward.
+        const from = urgency > 0.6 ? heading0 : u.heading;
+        u.heading = turnToward(from, away, maxTurn * T.avoidSteer * str * urgency * dt);
+      }
+    }
+
+    // Hull limit: whatever asked for the turn (pilot, AI, evasion, drift), the
+    // ship can't swing faster than its turn radius allows.
+    if (u.dodgeTimer <= 0) {
+      const d = wrapAngle(u.heading - heading0), lim = maxTurn * dt;
+      if (Math.abs(d) > lim) u.heading = heading0 + Math.sign(d) * lim;
+    }
+
+    // Ships never stall: an ignored ship just slows to minSpeed and drifts.
+
+    // --- Movement ---
+    let speed = juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed;
+    if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
+    speed *= cripple;
+    u.vx = Math.cos(u.heading) * speed; u.vy = Math.sin(u.heading) * speed;
+    u.x += u.vx * dt;
+    u.y += u.vy * dt;
+
+    const distFromCenter = Math.hypot(u.x, u.y);
+    if (distFromCenter > T.arenaRadius && u.dodgeTimer <= 0) {
+      u.heading = turnToward(u.heading, Math.atan2(-u.y, -u.x), Math.min(T.edgeSteer, maxTurn) * dt);
+    }
+
+    for (const h of this.hazards) {
+      if (Math.hypot(u.x - h.x, u.y - h.y) < h.r + T.unitRadius * cls.size) { this._kill(u, 'contact'); break; }
+    }
+    if (u.state !== ALIVE) return;
+
+    if (u.guns[0] === u) u.gunAngle = u.heading; // fixed guns ride the hull
+
+    // --- Gunnery. Reduced tier: every 2nd tick. Dormant: no acquisition at all. ---
+    if (u.tier === 2 || (u.tier === 1 && (this.tick & 1) === 1)) return;
+    const bridgeOut = cls.turret && this._weakFlag(u, 'bridge');
+    for (let gi = 0; gi < u.guns.length; gi++) this._gunnery(u, u.guns[gi], gi, cls, dt, bridgeOut);
   };
 
   Sim.prototype.step = function () {
@@ -709,180 +933,77 @@
       if (pick) { this.aiPick[t] = pick.id; pick.decTick = this.tick; this.aiBudget[t] -= 1; }
     }
 
-    // --- Update gating: tier by distance to nearest living foe. Deterministic. ---
+    // --- Frozen frame + spatial grid: what every ship sees this tick. ---
+    const F = this.frame;
+    F.length = this.units.length;
+    this.grid.clear();
+    let maxHull = 0;
+    for (const u of this.units) {
+      const c = CLASSES[u.cls];
+      F[u.id] = { id: u.id, x: u.x, y: u.y, vx: u.vx, vy: u.vy, team: u.team, cls: u.cls,
+                  alive: u.state === ALIVE, energy: u.energy, capital: isCapitalHull(u.cls) };
+      if (u.state === ALIVE) this.grid.insert(u.id, u.x, u.y);
+      maxHull = Math.max(maxHull, T.unitRadius * c.size);
+    }
+    this.maxHullR = maxHull;
+
+    // --- Update gating: tier by distance to the nearest living foe. ---
     for (const u of this.units) {
       if (u.state !== ALIVE) continue;
-      let nearestFoe = Infinity;
-      for (const v of this.units) {
-        if (v.team === u.team || v.state !== ALIVE) continue;
-        const d = Math.hypot(v.x - u.x, v.y - u.y);
-        if (d < nearestFoe) nearestFoe = d;
-      }
-      u.tier = nearestFoe > T.gateDormantDist ? 2 : (nearestFoe > T.gateReducedDist ? 1 : 0);
+      let near = Infinity;
+      const scan = id => { const v = F[id]; if (v.alive && v.team !== u.team) near = Math.min(near, Math.hypot(v.x - u.x, v.y - u.y)); };
+      this.grid.query(u.x, u.y, T.gateReducedDist, scan);
+      if (near > T.gateReducedDist) this.grid.query(u.x, u.y, T.gateDormantDist, scan);
+      u.tier = near > T.gateDormantDist ? 2 : (near > T.gateReducedDist ? 1 : 0);
       if (u.held) u.tier = 0; // the possessed ship is always full-rate
     }
 
-    for (const u of this.units) {
-      if (u.state === CRYSTALLIZED) continue;
-      if (u.state === CRYSTALLIZING) {
-        u.crystallizeTimer += dt;
-        if (u.crystallizeTimer >= T.crystallizeSec) {
-          u.state = CRYSTALLIZED;
-          if (T.wreckCrystals) this.hazards.push({ x: u.x, y: u.y, r: T.unitRadius * 1.6, salvage: true });
-          // Destroy the Carrier: the wreck is worth salvaging.
-          const c = CLASSES[u.cls];
-          if (this.mode === 'carrier' && !c.noGuns) {
-            const value = Math.round((c.cost || 400) * T.salvageFrac);
-            if (value > 0) this.wrecks.push({ x: u.x, y: u.y, value: value, ttl: T.wreckSec });
-          }
-          this.events.push({ type: 'crystallized', unit: u.id, tick: this.tick });
-        }
-        continue;
+    // --- THINK (order-independent: see _think) ---
+    this._fires = []; this._charges = []; this._deaths = [];
+    const n = this.units.length;
+    for (let i = 0; i < n; i++) this._think(this.units[this._reverseThink ? n - 1 - i : i]);
+
+    // --- RESOLVE: apply intents in ship-id order. ---
+    this._fires.sort((a, b) => a.u.id - b.u.id || a.gi - b.gi);
+    for (const f of this._fires) {
+      this._fireProjectile(f.u, f.angle, f.g, f);
+      this.events.push({ type: 'fired', unit: f.u.id, gun: f.gi, target: f.g.targetId, spread: f.spread, lockQ: f.g.lockQ, tick: this.tick });
+    }
+    this._charges.sort((a, b) => a.to - b.to || a.from - b.from);
+    for (const c of this._charges) {
+      const v = this.units[c.to];
+      if (v.state !== ALIVE) continue;
+      v.energy = Math.min(CLASSES[v.cls].energyMax, v.energy + c.amount);
+      v.charging = this.tick;
+    }
+    this._deaths.sort((a, b) => a.id - b.id);
+    for (const u of this._deaths) {
+      if (T.wreckCrystals) this.hazards.push({ x: u.x, y: u.y, r: T.unitRadius * 1.6, salvage: true });
+      // Destroy the Carrier: the wreck is worth salvaging.
+      const c = CLASSES[u.cls];
+      if (this.mode === 'carrier' && !c.noGuns) {
+        const value = Math.round((c.cost || 400) * T.salvageFrac);
+        if (value > 0) this.wrecks.push({ x: u.x, y: u.y, value: value, ttl: T.wreckSec });
       }
-
-      const cls = CLASSES[u.cls];
-      if (u.beingShotTimer > 0) u.beingShotTimer -= dt;
-      if (u.lockoutTimer > 0) u.lockoutTimer -= dt;
-
-      // Knocked-out weak points keep costing the capital.
-      let cripple = 1;
-      if (u.weak.length) {
-        let vents = 0;
-        for (const w of u.weak) if (w.out && w.type === 'vent') vents++;
-        if (vents) { this._damage(u, vents * T.ventLeak * dt, 'breach'); if (u.state !== ALIVE) continue; }
-        if (this._weakFlag(u, 'engine')) cripple = T.engineCripple;
-      }
-      if (cls.battery) this._battery(u, cls, dt);
-
-      // --- Steering. Every source of turning is capped by the hull's turn rate:
-      // current speed / turnRadius. No ship ever snaps to a new heading. ---
-      const juggles = this.human[u.team] && !cls.noStall; // carriers cruise steadily, never stall
-      const curSpeed = (juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed) * cripple;
-      const maxTurn = curSpeed / (cls.turnRadius * T.turnRadiusScale) * (u.tier === 1 ? 2 : 1); // rad/s (Reduced tier steps half as often)
-      const heading0 = u.heading;
-      if (u.dodgeTimer > 0) {
-        // Barrel roll: dead straight, no steering of any kind.
-        u.dodgeTimer -= dt;
-        if (u.dodgeTimer <= 0) u.lockoutTimer = T.dodgeLockoutSec;
-      } else if (u.held) {
-        if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], maxTurn * dt);
-      } else if (this.human[u.team]) {
-        // Unpossessed ship on a human-flown side: the juggle clock runs.
-        if (juggles) u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
-        if (u.goal !== null && u.lockoutTimer <= 0) {
-          u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
-          if (Math.abs(wrapAngle(u.goal - u.heading)) < 1e-3) u.goal = null;
-        }
-        if (juggles) u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
-      } else {
-        // Opposition AI: same class table, seeks nearest player ship to gun range.
-        // It only re-aims a ship when it spends an action on it (APM-matched,
-        // see the budget above); in between the ship turns toward its last goal
-        // and flies on, just like a released player ship.
-        const decide = this.aiPick[u.team] === u.id;
-        if (u.goal !== null) u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
-        if (decide && cls.noGuns) {
-          // AI carrier: hold station behind its own line, circling.
-          const homeX = (u.team === PLAYER ? -1 : 1) * (T.spawnDist + 260);
-          const dx = homeX - u.x, dy = -u.y;
-          u.goal = Math.hypot(dx, dy) > 90 ? Math.atan2(dy, dx) : u.heading + Math.PI / 2;
-        } else if (u.tier < 2 && decide) {
-          let tgt = null, tgtD = Infinity;
-          const huntCapitals = !!cls.vsCapital;
-          for (const v of this.units) {
-            if (v.team === u.team || v.state !== ALIVE) continue;
-            // Anti-capital ships treat capitals and carriers as much closer than they are.
-            const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && isCapitalHull(v.cls) ? 0.25 : 1);
-            if (d < tgtD) { tgtD = d; tgt = v; }
-          }
-          if (tgt) tgtD = Math.hypot(tgt.x - u.x, tgt.y - u.y);
-          if (tgt) {
-            const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
-            let want;
-            if (cls.turret) {
-              // Turret ship: close to range, then turn broadside so a side turret bears.
-              want = tgtD > cls.coneRange * 0.7 ? toTgt : toTgt + Math.PI / 2;
-            } else {
-              // Fixed guns: strafing runs. Nose on target; peel off when too
-              // close, swing back around for the next pass.
-              want = tgtD > cls.coneRange * 0.35 ? toTgt : toTgt + Math.PI * 0.6;
-            }
-            u.goal = want;
-          }
-        }
-      }
-
-      // Crystal evasion for everything unheld and not mid-roll. Only crystals
-      // ahead matter, and a ship that turns wide has to start turning early:
-      // look-ahead = avoidRange + its turn radius. It veers to whichever side
-      // the crystal isn't on, using its own hull turn rate.
-      if (!u.held && u.dodgeTimer <= 0 && T.avoidSteer > 0) {
-        const look = T.avoidRange + cls.turnRadius * T.turnRadiusScale;
-        let nearest = null, nearestGap = Infinity, nearestRel = 0;
-        for (const h of this.hazards) {
-          const dx = h.x - u.x, dy = h.y - u.y;
-          const rel = wrapAngle(Math.atan2(dy, dx) - u.heading);
-          if (Math.abs(rel) > Math.PI / 2) continue; // behind us
-          const gap = Math.hypot(dx, dy) - h.r - T.unitRadius * cls.size;
-          if (gap < look && gap < nearestGap) { nearestGap = gap; nearest = h; nearestRel = rel; }
-        }
-        if (nearest) {
-          const away = u.heading - (nearestRel >= 0 ? 1 : -1) * Math.PI / 2;
-          const urgency = Math.min(1, 1.5 * (1 - Math.max(0, nearestGap) / look));
-          const str = juggles ? u.momentum : 1;
-          // Close call: evasion overrides whatever the pilot/AI was turning toward.
-          const from = urgency > 0.6 ? heading0 : u.heading;
-          u.heading = turnToward(from, away, maxTurn * T.avoidSteer * str * urgency * dt);
-        }
-      }
-
-      // Hull limit: whatever asked for the turn (pilot, AI, evasion, drift), the
-      // ship can't swing faster than its turn radius allows.
-      if (u.dodgeTimer <= 0) {
-        const d = wrapAngle(u.heading - heading0), lim = maxTurn * dt;
-        if (Math.abs(d) > lim) u.heading = heading0 + Math.sign(d) * lim;
-      }
-
-      // Ships never stall: an ignored ship just slows to minSpeed and drifts.
-
-      // --- Movement ---
-      let speed = juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed;
-      if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
-      speed *= cripple;
-      u.vx = Math.cos(u.heading) * speed; u.vy = Math.sin(u.heading) * speed;
-      u.x += u.vx * dt;
-      u.y += u.vy * dt;
-
-      const distFromCenter = Math.hypot(u.x, u.y);
-      if (distFromCenter > T.arenaRadius && u.dodgeTimer <= 0) {
-        u.heading = turnToward(u.heading, Math.atan2(-u.y, -u.x), Math.min(T.edgeSteer, maxTurn) * dt);
-      }
-
-      for (const h of this.hazards) {
-        if (Math.hypot(u.x - h.x, u.y - h.y) < h.r + T.unitRadius * cls.size) { this._kill(u, 'contact'); break; }
-      }
-      if (u.state !== ALIVE) continue;
-
-      if (u.guns[0] === u) u.gunAngle = u.heading; // fixed guns ride the hull
-
-      // --- Gunnery. Reduced tier: every 2nd tick. Dormant: no acquisition at all. ---
-      if (u.tier === 2 || (u.tier === 1 && (this.tick & 1) === 1)) continue;
-      const bridgeOut = cls.turret && this._weakFlag(u, 'bridge');
-      for (let gi = 0; gi < u.guns.length; gi++) this._gunnery(u, u.guns[gi], gi, cls, dt, bridgeOut);
     }
 
     // --- Projectiles: move, contact-detonate on foes and crystals, flak at end of life. ---
+    this.gridNow.clear();
+    for (const u of this.units) if (u.state === ALIVE) this.gridNow.insert(u.id, u.x, u.y);
+    this._gridLive = true;
     for (const p of this.projectiles) {
       if (!p.active) continue;
       p.x += p.vx * dt; p.y += p.vy * dt;
       p.ttl -= dt;
       let boom = p.ttl <= 0;
       if (!boom) {
-        for (const u of this.units) {
-          if (u.state !== ALIVE || u.id === p.owner) continue;
-          if (u.team === p.team && !this.T.friendlyFire) continue;
-          if (Math.hypot(u.x - p.x, u.y - p.y) < this.T.unitRadius * CLASSES[u.cls].size + 4) { boom = true; break; }
-        }
+        this.gridNow.query(p.x, p.y, this.maxHullR + 4, id => {
+          if (boom) return;
+          const u = this.units[id];
+          if (u.state !== ALIVE || u.id === p.owner) return;
+          if (u.team === p.team && !this.T.friendlyFire) return;
+          if (Math.hypot(u.x - p.x, u.y - p.y) < this.T.unitRadius * CLASSES[u.cls].size + 4) boom = true;
+        });
       }
       if (!boom) {
         for (const h of this.hazards) {
@@ -892,6 +1013,7 @@
       if (boom) this._detonate(p);
     }
 
+    this._gridLive = false;
     if (this.mode === 'carrier') this._economy(dt);
 
     this.tick++;
@@ -917,8 +1039,17 @@
   const CODE_STATE = ['alive', 'crystallizing', 'crystallized'];
   const gunSnap = g => [r3(g.gunAngle), g.targetId, r3(g.lockQ), r3(g.lockCap), r3(g.entryQ)];
   function gunApply(g, a) { g.gunAngle = a[0]; g.targetId = a[1]; g.lockQ = a[2]; g.lockCap = a[3]; g.entryQ = a[4]; }
-  Sim.prototype.snapshot = function (events) {
-    const units = this.units.map(u => [
+  // viewer (optional): { team, radius } — interest management. Only that side's
+  // ships and other ships within `radius` of one of them are sent (with `ids`),
+  // the visibility-worker job in a sharded build. Omit it for the full state.
+  Sim.prototype.snapshot = function (events, viewer) {
+    let list = this.units;
+    if (viewer) {
+      const mine = this.units.filter(u => u.team === viewer.team && u.state === ALIVE), r2v = viewer.radius * viewer.radius;
+      list = this.units.filter(u => u.team === viewer.team ||
+        mine.some(m => (m.x - u.x) * (m.x - u.x) + (m.y - u.y) * (m.y - u.y) <= r2v));
+    }
+    const units = list.map(u => [
       r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
       STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
       r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
@@ -931,7 +1062,7 @@
     for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
     return {
       tick: this.tick, held: this.held.slice(), aim: this.aim.map(r3), human: this.human.slice(),
-      units: units, proj: proj,
+      units: units, proj: proj, ids: viewer ? list.map(u => u.id) : undefined, count: this.units.length,
       hazards: this.hazards.map(h => [r2(h.x), r2(h.y), r2(h.r), h.salvage ? 1 : 0]),
       events: events || [],
       apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
@@ -943,7 +1074,9 @@
   };
   Sim.prototype.applySnapshot = function (snap) {
     this.tick = snap.tick; this.held = snap.held; this.aim = snap.aim; this.human = snap.human;
-    snap.units.forEach((a, i) => {
+    if (snap.ids) for (const u of this.units) u.hidden = true; // filtered view: only listed ships are current
+    snap.units.forEach((a, k) => {
+      const i = snap.ids ? snap.ids[k] : k;
       let u = this.units[i];
       const cls = CLASS_LIST[a[15]] || 'fighter', team = a[16] | 0;
       if (!u) {
@@ -963,7 +1096,9 @@
       if (Array.isArray(a[17])) a[17].forEach((ga, k) => { if (u.guns[k] && u.guns[k] !== u) gunApply(u.guns[k], ga); });
       if (a[18] !== undefined) u.battery = a[18];
       u.charging = a[19] ? snap.tick : -10;
+      u.hidden = false;
     });
+    while (this.projectiles.length < snap.proj.length && this._growPool(1024)) { /* grow to fit */ }
     let k = 0;
     for (const p of this.projectiles) {
       const a = snap.proj[k];

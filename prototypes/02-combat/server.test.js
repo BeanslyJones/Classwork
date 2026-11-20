@@ -2,6 +2,7 @@
 'use strict';
 const http = require('http');
 const { createServer } = require('./server.js');
+const { createBus, matches } = require('./bus.js');
 
 let failures = 0;
 function assert(cond, label) {
@@ -125,6 +126,28 @@ function get(port, path) {
 
   a.req.destroy();
   srv.server.close();
+
+  // --- Message bus: NATS-style subjects. ---
+  console.log('\n[message bus]');
+  assert(matches('cmd.*', 'cmd.1') && !matches('cmd.*', 'cmd.1.x') && !matches('cmd.*', 'ctl'), "'*' matches exactly one token");
+  assert(matches('state.>', 'state.full') && matches('state.>', 'state.player.1') && !matches('state.>', 'state'), "'>' matches one or more trailing tokens");
+  const bus = createBus(), got = [];
+  const off = bus.subscribe('cmd.*', (m, s) => got.push(s + ':' + m.n));
+  bus.publish('cmd.0', { n: 1 }); bus.publish('ctl', { n: 2 }); off(); bus.publish('cmd.1', { n: 3 });
+  assert(got.join() === 'cmd.0:1', 'subscribers get only matching subjects, and unsubscribe works');
+
+  // --- Interest filtering: each seat receives only ships near its own. ---
+  console.log('\n[interest filtering]');
+  const srv2 = createServer({ interestRadius: 250 });
+  await new Promise(r => srv2.server.listen(0, '127.0.0.1', r));
+  const p2 = srv2.server.address().port;
+  const v = await connect(p2);
+  await wait(400);
+  assert(v.lastSnap && Array.isArray(v.lastSnap.ids), 'a seated player gets a filtered snapshot (with ship ids)');
+  assert(v.lastSnap.units.length < srv2.sim.units.length, 'it carries fewer ships than the whole battle (' + v.lastSnap.units.length + ' of ' + srv2.sim.units.length + ')');
+  v.req.destroy();
+  srv2.server.close();
+
   console.log('\n' + (failures === 0 ? 'ALL SERVER TESTS PASSED' : failures + ' FAILURE(S)'));
   process.exit(failures === 0 ? 0 : 1);
 })();

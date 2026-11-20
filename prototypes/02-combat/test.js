@@ -510,6 +510,39 @@ function wrapA2(x) { while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) 
   assert(first >= 0 && flagged && flagged.retarget === true, 'a lock taken after a retarget is flagged for the cue');
 }
 
+// --- 5n. Shardable architecture: order-independent two-phase tick. -------------
+{
+  console.log('\n[two-phase tick: order independence]');
+  for (const mode of ['skirmish', 'carrier']) {
+    const a = new Sim(SEED, {}, null, { mode: mode }), b = new Sim(SEED, {}, null, { mode: mode });
+    b._reverseThink = true; // think about ships in the opposite order
+    let same = true;
+    for (let t = 0; t < 3000 && same; t++) { a.step(); b.step(); if (t % 100 === 99) same = a.stateHash() === b.stateHash(); }
+    assert(same && a.stateHash() === b.stateHash(), mode + ': thinking ships in reverse order gives the identical battle (3000 ticks)');
+  }
+  // Grid neighbour queries match brute force.
+  const s = new Sim(SEED, {}, null, { mode: 'carrier' });
+  for (let t = 0; t < 600; t++) s.step();
+  let ok = true;
+  for (const u of s.units) {
+    if (u.state !== 'alive') continue;
+    const viaGrid = new Set(), brute = new Set();
+    s.grid.query(u.x, u.y, 300, id => { const v = s.frame[id]; if (v.alive && Math.hypot(v.x - u.x, v.y - u.y) <= 300) viaGrid.add(id); });
+    for (const v of s.frame) if (v.alive && Math.hypot(v.x - u.x, v.y - u.y) <= 300) brute.add(v.id);
+    if (viaGrid.size !== brute.size || [...brute].some(id => !viaGrid.has(id))) ok = false;
+  }
+  assert(ok, 'spatial grid finds exactly the ships brute force finds');
+  assert(s.units.every(u => typeof u.owner === 'number' && typeof u.rng === 'function'), 'every ship has an owner and its own RNG stream');
+  // Interest management: a filtered snapshot only carries ships near the viewer's.
+  const full = s.snapshot([]), near = s.snapshot([], { team: PLAYER, radius: 250 });
+  const expect = s.units.filter(u => u.team === PLAYER || s.units.some(m => m.team === PLAYER && m.state === 'alive' && Math.hypot(m.x - u.x, m.y - u.y) <= 250)).map(u => u.id);
+  assert(near.units.length < full.units.length && JSON.stringify(near.ids) === JSON.stringify(expect), 'filtered snapshot sends only ships near the viewer (' + near.units.length + ' of ' + full.units.length + ')');
+  const viewer = new Sim(SEED, {}, null, { mode: 'carrier' });
+  viewer.applySnapshot(JSON.parse(JSON.stringify(full)));
+  viewer.applySnapshot(JSON.parse(JSON.stringify(near)));
+  assert(viewer.units.filter(u => !u.hidden).length === near.units.length, 'a client hides ships it was not sent');
+}
+
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------
 {
   console.log('\n[dodge]');

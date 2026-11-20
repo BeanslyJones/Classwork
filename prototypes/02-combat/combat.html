@@ -885,7 +885,7 @@ function drawWorld() {
 
   // Units
   for (const u of sim.units) {
-    if (u.state === 'crystallized') continue;
+    if (u.state === 'crystallized' || u.hidden) continue;
     const cls = CLASSES[u.cls];
     const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
