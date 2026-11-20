@@ -170,6 +170,31 @@
   #lanes.show { display: flex; }
   #lanes span { padding: 3px 6px; border-radius: 6px; color: #8fa3c8; transition: background .06s; }
   #lanes b { color: #cdd6e4; padding: 3px 6px; }
+  /* Fleet Battle: draft page + hangar bar */
+  #fleetPage .wrap { max-width: 1000px; margin: 0 auto; padding: 16px 16px 40px; }
+  #fleetPage header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #fleetPage h2 { margin: 0; letter-spacing: .2em; font-size: 20px; }
+  .fleetTop { display: grid; grid-template-columns: 150px 1fr; gap: 14px; margin: 12px 0; align-items: center; }
+  @media (max-width: 600px) { .fleetTop { grid-template-columns: 1fr; } }
+  #fleetPreview { width: 150px; height: 110px; background: #10141d; border: 1px solid #263248; border-radius: 10px; }
+  #fleetName { font: 700 18px system-ui; background: #10141d; color: #fff; border: 1px solid #3a4a6a; border-radius: 8px; padding: 8px 10px; width: min(100%, 420px); }
+  .swatches, .patterns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .swatches button { width: 26px; height: 26px; border-radius: 50%; padding: 0; border: 2px solid transparent; }
+  .swatches button.on, .patterns button.on { border-color: #fff; }
+  .shop { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+  .shop button { text-align: left; padding: 9px 10px; border-radius: 10px; }
+  .shop button small { display: block; color: #8fa3c8; }
+  .shop button:disabled { opacity: .35; }
+  #fleetList { display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px; margin: 8px 0; }
+  #fleetList .chip { cursor: pointer; }
+  #fleetList .chip.first { border-color: #ffd76a; }
+  .fleetGo { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .fleetGo button { padding: 12px 18px; font-weight: 700; letter-spacing: .1em; border-radius: 10px; }
+  #hangarBar { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 8; display: none; gap: 5px; align-items: center;
+               background: rgba(16,20,29,.9); border: 1px solid #2e3a52; border-radius: 12px; padding: 6px 8px; max-width: calc(100% - 340px); flex-wrap: wrap; font-size: 12px; }
+  #hangarBar.show { display: flex; }
+  #hangarBar button { padding: 5px 8px; font-size: 12px; border-radius: 8px; }
+  #hangarBar button.next { border-color: #ffd76a; color: #ffd76a; }
   /* Stress test */
   .stressRow { display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; margin-top: 8px; color: #8fa3c8; font-size: 12px; letter-spacing: .08em; }
   .stressRow button { padding: 6px 10px; font-size: 13px; }
@@ -191,6 +216,7 @@
     <div class="menu">
       <button id="btnPlay" class="primary">SKIRMISH</button>
       <button id="btnCarrier">DESTROY THE CARRIER</button>
+      <button id="btnFleet">FLEET BATTLE</button>
       <button id="btnBeat">BEAT BATTLE</button>
       <button id="btnTutorial">TUTORIAL</button>
       <button id="btnGarage">GARAGE</button>
@@ -212,6 +238,30 @@
     <div class="note">Names, roles and numbers are prototype placeholders. Stats come live from the game's class table,
       so they always match what's in the battle. Firepower = damage per second at base fire rate.</div>
     <div class="cards" id="cards" style="margin-top:12px"></div>
+  </div>
+</div>
+<div id="fleetPage" class="overlay">
+  <div class="wrap">
+    <header><h2>FLEET BATTLE · DRAFT</h2><button id="fleetBack">◀ MENU</button></header>
+    <div class="fleetTop">
+      <canvas id="fleetPreview" width="300" height="220"></canvas>
+      <div>
+        <input id="fleetName" maxlength="40" aria-label="Fleet name"> <button id="fleetReroll" title="New name, colour and pattern">🎲 Reroll</button>
+        <div class="swatches" id="fleetSwatches"></div>
+        <div class="patterns" id="fleetPatterns"></div>
+      </div>
+    </div>
+    <div class="hint" style="color:#8fa3c8;font-size:12px">You start with your first ship. Every <b id="fleetSecLbl">20</b>s every player brings their next ship in; during the
+      battle, tap a ship in your hangar bar to choose what comes next. Tap a ship below to remove it, or ★ to make it your starting ship.</div>
+    <div><b id="fleetMoney"></b></div>
+    <div id="fleetList"></div>
+    <div class="shop" id="fleetShop"></div>
+    <div class="fleetGo">
+      <label style="color:#8fa3c8;font-size:12px">Next ship every <input type="range" id="fleetSec" min="3" max="120" step="1" value="20"> <span id="fleetSecVal">20</span>s</label>
+      <span id="fleetReady" style="color:#8fa3c8;font-size:12px"></span>
+      <button id="fleetSubmit">READY</button>
+      <button id="fleetStart" class="primary">START BATTLE</button>
+    </div>
   </div>
 </div>
 <div id="plan" class="overlay">
@@ -237,6 +287,7 @@
     <canvas id="cv"></canvas>
     <div id="hud"></div>
     <div id="perf"></div>
+    <div id="hangarBar"></div>
     <button id="panelToggle">⚙</button>
     <button id="menuBtn">☰ MENU</button>
     <div id="lanes"></div>
@@ -344,6 +395,10 @@ if (NET) document.body.classList.add('net');
 let myTeam = 0;         // the side this screen flies (net: assigned by the server; -1 = spectating)
 let netId = null, netLobby = null;
 const MINE = () => (myTeam < 0 ? 0 : myTeam);
+let myCtl = 0;           // this screen's player seat (controller); team = seat & 1
+const MYCTL = () => (myCtl < 0 ? 0 : myCtl);
+// Ships this screen may fly: its side's ships, and in Fleet Battle only its own fleet.
+const flyable = u => u.team === MINE() && (sim.mode !== 'fleet' || u.owner === MYCTL());
 const THEIRS = () => 1 - MINE();
 function act(cmd) {
   if (!NET) { sim.command(cmd); return; }
@@ -353,6 +408,23 @@ function act(cmd) {
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
+// Zoom: trackpad pinch (arrives as wheel + ctrlKey), mouse wheel, or two-finger pinch on a touchscreen. 0 resets.
+let userZoom = 1;
+const zoomBy = f => { userZoom = Math.max(0.35, Math.min(6, userZoom * f)); };
+cv.addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
+const touches = new Map(); let pinchD = 0;
+cv.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') touches.set(e.pointerId, [e.clientX, e.clientY]); });
+cv.addEventListener('pointermove', e => {
+  if (!touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, [e.clientX, e.clientY]);
+  if (touches.size !== 2) { pinchD = 0; return; }
+  const [a, b] = [...touches.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+  if (pinchD) zoomBy(d / pinchD);
+  pinchD = d;
+});
+const touchEnd = e => { touches.delete(e.pointerId); pinchD = 0; };
+cv.addEventListener('pointerup', touchEnd); cv.addEventListener('pointercancel', touchEnd);
+window.addEventListener('keydown', e => { if (e.key === '0' && document.activeElement.tagName !== 'INPUT') userZoom = 1; });
 const hud = document.getElementById('hud');
 
 // ---- Weather: the radiation zones under the battle (looks only, no effects) ----
@@ -407,7 +479,8 @@ function restart(newSeed) {
   if (NET) { act({ type: 'restart', newSeed: !!newSeed }); return; }
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   if (gameMode === 'tutorial') sim = new Sim(seed, Object.assign({}, overrides, { spawnDist: 470, aiApmMatch: 0.4 }), TUTORIAL_ROSTER);
-  else sim = new Sim(seed, overrides, null, { mode: gameMode, song: beatSong, count: stressCount });
+  else sim = new Sim(seed, overrides, null, { mode: gameMode, song: beatSong, count: stressCount,
+                                              fleets: gameMode === 'fleet' ? [Object.assign({ ctl: 0 }, fleetDraft)] : undefined });
   wxStartLocal();
   if (gameMode === 'beat') for (const id in planLanes) if (sim.units[id] && sim.units[id].team === 0) sim.units[id].lane = planLanes[id];
   bannerShown = false; document.getElementById('banner').classList.remove('show');
@@ -546,7 +619,7 @@ setCamMode(camMode);
 // Snap and Bubble follow it; with nothing selected they fall back to Fit.
 let selected = -1;
 function focusUnit() {
-  if (sim.held[MINE()] >= 0) selected = sim.held[MINE()];
+  if (sim.held[MYCTL()] >= 0) selected = sim.held[MYCTL()];
   const f = selected >= 0 ? sim.units[selected] : null;
   if (f && f.state === 'alive') return f;
   selected = -1;
@@ -577,7 +650,7 @@ cv.addEventListener('pointerdown', e => {
   const PICK_PX = 40;
   let bestU = null, bestD = Infinity;
   for (const u of sim.units) {
-    if (u.team !== MINE() || u.state !== 'alive') continue;
+    if (!flyable(u) || u.state !== 'alive') continue;
     const d = Math.hypot(u.x - w.x, u.y - w.y) * cam.scale;
     if (d < bestD) { bestD = d; bestU = u; }
   }
@@ -616,7 +689,8 @@ cv.addEventListener('pointercancel', endPointer);
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
   // Menus up: only Enter (start) and M (mute) do anything.
-  if (titleEl.classList.contains('show') || garageEl.classList.contains('show') || document.getElementById('plan').classList.contains('show')) {
+  if (titleEl.classList.contains('show') || garageEl.classList.contains('show') || document.getElementById('plan').classList.contains('show') ||
+      document.getElementById('fleetPage').classList.contains('show')) {
     if (e.key === 'Enter' && titleEl.classList.contains('show')) startBattle(NET ? undefined : 'skirmish');
     if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
     return;
@@ -625,7 +699,7 @@ window.addEventListener('keydown', e => {
     const id = parseInt(e.key, 10) - 1;
     // Keys 1-9 SELECT your Nth ship (camera, bubble, DODGE / RETARGET target).
     // Selecting never gives an order — only clicking and dragging a ship steers it.
-    const mine = sim.units.filter(v => v.team === MINE());
+    const mine = sim.units.filter(flyable);
     const pick = mine[id];
     if (pick && pick.state === 'alive') { selected = pick.id; SFX.select(); }
   }
@@ -669,6 +743,9 @@ function pushFlashes(events) {
     } else if (e.type === 'fired') {
       const u = sim.units[e.unit]; if (!u) continue;
       const a = earAt(u.x, u.y); SFX.shot(u.cls, a.pan, a.vol);
+    } else if (e.type === 'deployed') {
+      const u = sim.units[e.unit];
+      if (u && e.ctl === MYCTL()) { floats.push({ x: u.x, y: u.y, text: 'REINFORCEMENT', color: '#9fd0ff', age: 0 }); SFX.built(); }
     } else if (e.type === 'launch') {
       const u = sim.units[e.unit]; if (!u) continue;
       const a = earAt(u.x, u.y); SFX.shot(e.kind === 'rocket' ? 'heavy' : 'torpedo', a.pan, a.vol);
@@ -702,7 +779,7 @@ function pushFlashes(events) {
 // Aim while dragging: every tick offline; ~20x/s over the network.
 let lastAimSent = 0;
 function currentAim() {
-  const h = sim.held[MINE()];
+  const h = sim.held[MYCTL()];
   if (!pointer.down || h < 0 || !pointer.dragged) return null;
   const u = sim.units[h], w = toWorld(pointer.x, pointer.y);
   return Math.atan2(w.y - u.y, w.x - u.x);
@@ -750,8 +827,8 @@ if (NET) {
   const es = new EventSource('/events');
   es.addEventListener('hello', ev => {
     const h = JSON.parse(ev.data);
-    netId = h.id; myTeam = h.seat;
-    if (h.seed !== seed || !sim._net || (h.mode && h.mode !== sim.mode) || (h.mode === 'stress' && h.count !== sim.stressCount)) {
+    netId = h.id; myCtl = h.seat; myTeam = h.seat < 0 ? -1 : (h.seat & 1);
+    if (h.seed !== seed || !sim._net || (h.mode && h.mode !== sim.mode) || (h.mode === 'stress' && h.count !== sim.stressCount) || h.mode === 'fleet') {
       seed = h.seed; overrides = h.overrides || {};
       sim = new Sim(seed, overrides, null, { mode: h.mode || 'skirmish', song: h.song, count: h.count }); sim._net = true;
       selected = -1; flashes.length = 0;
@@ -811,6 +888,15 @@ const HULLS = {
   capital:     [[1.3, 0], [1.1, 0.35], [0.5, 0.45], [0.3, 0.7], [-0.3, 0.7], [-0.5, 0.55], [-1.0, 0.55], [-1.1, 0.3], [-1.0, 0]],
   carrier:     [[1.25, 0], [1.15, 0.3], [0.85, 0.42], [0.8, 0.62], [-0.2, 0.62], [-0.3, 0.5], [-0.95, 0.5], [-1.15, 0.32], [-1.1, 0]],
 };
+// Fleet patterns, drawn in ship space (nose = +x) and clipped to the hull.
+function drawPattern(c, pattern, r) {
+  c.fillStyle = 'rgba(10,14,22,0.42)'; c.strokeStyle = 'rgba(10,14,22,0.42)'; c.lineWidth = r * 0.18;
+  if (pattern === 'stripes') { c.beginPath(); for (let x = -2 * r; x < 2 * r; x += r * 0.5) { c.moveTo(x, -2 * r); c.lineTo(x + r, 2 * r); } c.stroke(); }
+  else if (pattern === 'chevron') { c.beginPath(); for (let x = -1.2 * r; x < 1.5 * r; x += r * 0.6) { c.moveTo(x - r * 0.4, -1.5 * r); c.lineTo(x, 0); c.lineTo(x - r * 0.4, 1.5 * r); } c.stroke(); }
+  else if (pattern === 'dots') { for (let x = -1.2 * r; x < 1.5 * r; x += r * 0.5) for (let y = -1.2 * r; y < 1.3 * r; y += r * 0.5) { c.beginPath(); c.arc(x, y, r * 0.1, 0, 7); c.fill(); } }
+  else if (pattern === 'split') c.fillRect(-2 * r, 0, 4 * r, 2 * r);
+  else if (pattern === 'band') c.fillRect(-0.2 * r, -2 * r, r * 0.4, 4 * r);
+}
 function hullPath(clsName, r, c) {
   c = c || ctx;
   const half = HULLS[clsName] || HULLS.fighter;
@@ -848,6 +934,7 @@ function render(dtReal) {
       ts = Math.max(base * 0.8, Math.min(base * camCfg.fitMaxZoom, ts));
     }
   }
+  ts *= userZoom; // trackpad pinch / mouse wheel on top of the camera mode
   const k = 1 - Math.exp(-dtReal * camCfg.camSmooth);
   if (!camState.s) { camState.cx = tx; camState.cy = ty; camState.s = ts; }
   camState.cx += (tx - camState.cx) * k;
@@ -955,6 +1042,7 @@ function render(dtReal) {
   restorePos();
   updateBuildBar();
   updateLaunchBtn();
+  updateHangarBar();
   updateLaneLights();
   if (carrierMode && sim.winner >= 0 && !bannerShown) showBanner(sim.winner === MINE() ? 'VICTORY' : 'DEFEAT',
     sim.winner === MINE() ? 'The enemy carrier is destroyed.' : 'Your carrier was destroyed.', sim.winner === MINE() ? '#5fd08a' : '#e85a4a');
@@ -1076,9 +1164,14 @@ function drawWorld() {
       const f = u.crystallizeTimer / sim.T.crystallizeSec;
       ctx.fillStyle = 'rgba(150,140,255,' + (0.4 + f * 0.6) + ')';
     } else {
-      ctx.fillStyle = u.held ? '#ffffff' : TEAMCOL[u.team];
+      const fl = sim.mode === 'fleet' && sim.fleets ? sim.fleets.find(f => f.ctl === u.owner) : null;
+      ctx.fillStyle = u.held ? '#ffffff' : fl ? fl.color : TEAMCOL[u.team];
     }
     ctx.fill();
+    { // Fleet Battle: the fleet's pattern on the hull (outline stays the side's colour)
+      const fl = sim.mode === 'fleet' && sim.fleets && u.state === 'alive' ? sim.fleets.find(f => f.ctl === u.owner) : null;
+      if (fl && fl.pattern !== 'solid') { ctx.save(); ctx.clip(); drawPattern(ctx, fl.pattern, r); ctx.restore(); hullPath(u.cls, r); }
+    }
     ctx.strokeStyle = u.held ? TEAMCOL[u.team] : TEAMLINE[u.team];
     ctx.lineWidth = 1.2 / cam.scale;
     ctx.lineJoin = 'round';
@@ -1338,11 +1431,11 @@ function drawWorld() {
   }
 
   // Aim line
-  if (sim.held[MINE()] >= 0) {
-    const u = sim.units[sim.held[MINE()]];
+  if (sim.held[MYCTL()] >= 0) {
+    const u = sim.units[sim.held[MYCTL()]];
     ctx.beginPath();
     ctx.moveTo(u.x, u.y);
-    ctx.lineTo(u.x + Math.cos(sim.aim[MINE()]) * 140, u.y + Math.sin(sim.aim[MINE()]) * 140);
+    ctx.lineTo(u.x + Math.cos(sim.aim[MYCTL()]) * 140, u.y + Math.sin(sim.aim[MYCTL()]) * 140);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.setLineDash([6, 6]);
     ctx.lineWidth = 2 / cam.scale;
@@ -1448,6 +1541,7 @@ function showTitle() {
   if (!NET) { sim.setHuman(0, false); selected = -1; }
   stopTutorial();
   if (typeof closePlan === 'function') closePlan();
+  document.getElementById('fleetPage').classList.remove('show');
   document.getElementById('banner').classList.remove('show');
 }
 function hideOverlays() { titleEl.classList.remove('show'); garageEl.classList.remove('show'); if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; } }
@@ -1718,6 +1812,88 @@ if (NET) {
   document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
   document.getElementById('btnTutorial').addEventListener('click', () => startBattle('tutorial'));
 }
+// ---- Fleet Battle: draft page ----
+const { randomFleetLook, FLEET_SHIPS, FLEET_COLORS, FLEET_PATTERNS, fleetCost } = CombatSim;
+let fleetDraft = null;
+try { fleetDraft = JSON.parse(localStorage.getItem('aa.fleet') || 'null'); } catch (e) {}
+if (!fleetDraft || !Array.isArray(fleetDraft.ships)) fleetDraft = Object.assign(randomFleetLook(Math.random), { ships: ['fighter', 'heavy', 'missileBoat'] });
+const fleetPage = document.getElementById('fleetPage');
+const budget = () => (sim.T.fleetBudget || TUNABLES.fleetBudget.value);
+const spent = () => fleetDraft.ships.reduce((a, c) => a + fleetCost(c), 0);
+function saveDraft() { try { localStorage.setItem('aa.fleet', JSON.stringify(fleetDraft)); } catch (e) {} }
+function renderFleetPage() {
+  document.getElementById('fleetName').value = fleetDraft.name;
+  document.getElementById('fleetSwatches').innerHTML = FLEET_COLORS.map(c => '<button data-c="' + c + '" style="background:' + c + '"' + (c === fleetDraft.color ? ' class="on"' : '') + ' aria-label="colour ' + c + '"></button>').join('');
+  document.getElementById('fleetPatterns').innerHTML = FLEET_PATTERNS.map(p => '<button data-p="' + p + '"' + (p === fleetDraft.pattern ? ' class="on"' : '') + '>' + p + '</button>').join('');
+  const left = budget() - spent();
+  document.getElementById('fleetMoney').textContent = '$' + left + ' left of $' + budget() + ' · ' + fleetDraft.ships.length + ' ships';
+  document.getElementById('fleetList').innerHTML = fleetDraft.ships.map((c, i) => '<span class="chip' + (i === 0 ? ' first' : '') + '" data-i="' + i + '">' +
+    (i === 0 ? 'START: ' : '<b data-star="' + i + '">★</b> ') + (SHIP_INFO[c] || {}).name + ' ✕</span>').join('');
+  document.getElementById('fleetShop').innerHTML = FLEET_SHIPS.map(c => '<button data-buy="' + c + '"' + (fleetCost(c) > left ? ' disabled' : '') + '>' +
+    (SHIP_INFO[c] || {}).name + ' · $' + fleetCost(c) + '<small>' + (SHIP_INFO[c] || {}).role + '</small></button>').join('');
+  const sec = sim.T.fleetDeploySec || TUNABLES.fleetDeploySec.value;
+  document.getElementById('fleetSec').value = sec; document.getElementById('fleetSecVal').textContent = sec; document.getElementById('fleetSecLbl').textContent = sec;
+  document.getElementById('fleetReady').textContent = NET && netLobby ? 'Drafted: ' + (netLobby.drafted || []).length + ' of ' + netLobby.seats.filter(Boolean).length + ' players' : '';
+  document.getElementById('fleetSubmit').style.display = NET ? '' : 'none';
+  // preview: the starting ship in fleet colours
+  const pc = document.getElementById('fleetPreview'), g = pc.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, pc.width, pc.height);
+  g.translate(pc.width / 2, pc.height / 2); g.rotate(-0.35);
+  const r = 50; hullPath(fleetDraft.ships[0] || 'fighter', r, g);
+  g.fillStyle = fleetDraft.color; g.fill();
+  if (fleetDraft.pattern !== 'solid') { g.save(); g.clip(); drawPattern(g, fleetDraft.pattern, r); g.restore(); hullPath(fleetDraft.ships[0] || 'fighter', r, g); }
+  g.strokeStyle = '#fff'; g.lineWidth = 3; g.stroke();
+}
+function openFleetPage() { hideOverlays(); fleetPage.classList.add('show'); renderFleetPage(); }
+fleetPage.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.c) fleetDraft.color = t.dataset.c;
+  else if (t.dataset.p) fleetDraft.pattern = t.dataset.p;
+  else if (t.closest('[data-buy]')) { const c = t.closest('[data-buy]').dataset.buy; if (fleetCost(c) <= budget() - spent()) fleetDraft.ships.push(c); }
+  else if (t.dataset.star) { const i = +t.dataset.star; fleetDraft.ships.unshift(fleetDraft.ships.splice(i, 1)[0]); }
+  else if (t.closest('#fleetList .chip')) fleetDraft.ships.splice(+t.closest('.chip').dataset.i, 1);
+  else return;
+  SFX.unlock(); SFX.ui(); saveDraft(); renderFleetPage();
+});
+document.getElementById('fleetName').addEventListener('input', e => { fleetDraft.name = e.target.value; saveDraft(); });
+document.getElementById('fleetReroll').addEventListener('click', () => { Object.assign(fleetDraft, randomFleetLook(Math.random)); SFX.ui(); saveDraft(); renderFleetPage(); });
+document.getElementById('fleetSec').addEventListener('input', e => {
+  const v = +e.target.value; document.getElementById('fleetSecVal').textContent = v; document.getElementById('fleetSecLbl').textContent = v;
+  if (NET) act({ type: 'tune', key: 'fleetDeploySec', value: v }); else { overrides.fleetDeploySec = v; sim.T.fleetDeploySec = v; }
+});
+document.getElementById('fleetBack').addEventListener('click', () => { fleetPage.classList.remove('show'); SFX.ui(); showTitle(); });
+document.getElementById('fleetSubmit').addEventListener('click', () => { act({ type: 'fleet', fleet: fleetDraft }); SFX.ui(); });
+document.getElementById('fleetStart').addEventListener('click', () => {
+  SFX.unlock(); fleetPage.classList.remove('show');
+  if (NET) { act({ type: 'fleet', fleet: fleetDraft }); setTimeout(() => act({ type: 'restart', newSeed: true, mode: 'fleet' }), 150); hideOverlays(); SFX.sting(); }
+  else startBattle('fleet');
+});
+document.getElementById('btnFleet').addEventListener('click', () => { SFX.unlock(); SFX.ui(); openFleetPage(); });
+if (NET) document.getElementById('btnFleet').textContent = 'FLEET BATTLE (draft, then start for everyone)';
+
+// In battle: your hangar, the countdown, and what comes in next.
+const hangarBar = document.getElementById('hangarBar');
+let hangarKey = '';
+function updateHangarBar() {
+  const f = sim.mode === 'fleet' && sim.fleets ? sim.fleets.find(g => g.ctl === MYCTL()) : null;
+  const on = !!f && myTeam >= 0 && !titleEl.classList.contains('show') && !fleetPage.classList.contains('show');
+  hangarBar.classList.toggle('show', on);
+  if (!on) return;
+  const key = f.hangar.join() + '|' + f.next + '|' + Math.ceil(sim.deployIn);
+  if (key === hangarKey) return;
+  hangarKey = key;
+  hangarBar.innerHTML = '<b style="color:' + f.color + '">' + f.name + '</b> · ' + (f.hangar.length ? 'next ship in ' + Math.max(0, Math.ceil(sim.deployIn)) + 's:' : 'hangar empty') +
+    f.hangar.map((c, i) => '<button data-n="' + i + '"' + (i === f.next ? ' class="next"' : '') + '>' + (SHIP_INFO[c] || {}).name + '</button>').join('');
+}
+hangarBar.addEventListener('pointerdown', e => {
+  e.stopPropagation();
+  const b = e.target.closest('button[data-n]');
+  if (!b) return;
+  act({ type: 'nextShip', index: +b.dataset.n });
+  const f = sim.fleets.find(g => g.ctl === MYCTL()); if (f) f.next = +b.dataset.n; // show it straight away
+  hangarKey = ''; SFX.select();
+});
+
 for (const b of document.querySelectorAll('#stressRow button')) b.addEventListener('click', () => {
   stressCount = +b.dataset.count;
   if (NET) { SFX.unlock(); SFX.ui(); hideOverlays(); act({ type: 'restart', newSeed: true, mode: 'stress', count: stressCount }); }

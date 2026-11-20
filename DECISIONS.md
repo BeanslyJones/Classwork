@@ -217,3 +217,16 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Still needed from the v12 spec: the pair-event matrix (10 events, likely one
   per gas pair incl. same-gas) and whether gases have weight / pressure-driven
   wind.
+
+## 23. Missiles, Fleet Battle, more players
+- **Missiles** use a lock mini-game: hold, a lock icon bounces in the cone (colour =
+  target's place in the cone; worse = faster), let go to launch. Lock is 100% with the
+  icon inside the target's health ring, 1% at the catch distance (55) beyond it.
+  Missiles track and lead; rockets are dumb; torpedoes run dumb and silent (invisible
+  to the enemy) until armed, then search. Ordnance can hit allies. Enemy reticles show.
+- **Fleet Battle:** draft a fleet with a budget (name, colour, pattern auto-generated
+  with reroll), start with one ship, and every player brings their next ship in on one
+  shared timer, adjustable in the lobby (default 20 s). You choose which hangar ship
+  comes next.
+- **More players:** up to 8 seats on LAN; seat & 1 = side. In Fleet Battle each player
+  flies only their own fleet; in other modes players on a side share its ships.

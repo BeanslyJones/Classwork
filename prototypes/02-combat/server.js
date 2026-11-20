@@ -37,9 +37,10 @@ const STATIC = {
 const WX_LEAD = 2;     // keyframes the weather runs ahead; screens never get further ahead than this
 const WX_PER_TICK = 3; // battle ticks per weather tick (30 Hz battle, 10 Hz weather)
 // Events screens need for effects and sound (everything else stays server-side).
-const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus', 'note', 'lane', 'launch']);
-const MODES = ['skirmish', 'carrier', 'beat', 'stress'];
-const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order', 'lane', 'launchHold', 'launchRelease']);
+const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus', 'note', 'lane', 'launch', 'deployed']);
+const MODES = ['skirmish', 'carrier', 'beat', 'stress', 'fleet'];
+const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order', 'lane', 'launchHold', 'launchRelease', 'nextShip']);
+const MAX_SEATS = Math.max(2, Math.min(8, parseInt(process.env.SEATS || '8', 10))); // players; seat & 1 = team (even blue, odd red)
 
 // ---------------------------------------------------------------- SIM service
 function startSimService(bus, opts) {
@@ -50,7 +51,9 @@ function startSimService(bus, opts) {
   let count = 150; // stress test: ships per side
   let sim = null;
   let speed = 0.5, paused = false;
+  const seated = new Array(8).fill(false); // which player seats are taken
   const humans = [false, false];
+  const fleets = {}; // Fleet Battle drafts, by seat
   let pendingEvents = [];
   const interest = opts.interestRadius > 0 ? opts.interestRadius : 0;
 
@@ -69,28 +72,32 @@ function startSimService(bus, opts) {
     wx = { log: log, client: client, agent: agent, half: sky.worldSize / 2 };
   }
   function newSim() {
-    sim = new Sim(seed, overrides, null, { mode: mode, song: song, count: count });
+    sim = new Sim(seed, overrides, null, { mode: mode, song: song, count: count,
+                                           fleets: Object.keys(fleets).filter(k => seated[k]).map(k => Object.assign({}, fleets[k], { ctl: +k })) });
     sim.human = humans.slice();
     pendingEvents = [];
     newWeather();
   }
   newSim();
-  const settings = () => ({ speed: speed, paused: paused, seed: seed, overrides: overrides, mode: mode, song: song, count: count });
+  const settings = () => ({ speed: speed, paused: paused, seed: seed, overrides: overrides, mode: mode, song: song, count: count,
+                            drafted: Object.keys(fleets).filter(k => seated[k]).map(Number) });
   const publishSettings = () => bus.publish('sim.settings', settings());
 
   // Seats: the gateway tells us which sides a person is flying.
   bus.subscribe('seat.*', (msg, subject) => {
-    const team = +subject.split('.')[1];
-    humans[team] = !!msg.human;
-    sim.setHuman(team, !!msg.human);
+    const seat = +subject.split('.')[1], team = seat & 1;
+    seated[seat] = !!msg.human;
+    humans[team] = seated.some((on, k) => on && (k & 1) === team);
+    sim.setHuman(team, humans[team]);
   });
   // Flying and building: one subject per seat.
   bus.subscribe('cmd.*', (cmd, subject) => {
-    const team = +subject.split('.')[1];
-    if (!(team === 0 || team === 1) || !cmd || typeof cmd.type !== 'string') return;
+    const seat = +subject.split('.')[1], team = seat & 1;
+    if (!(seat >= 0 && seat < 8) || !cmd || typeof cmd.type !== 'string') return;
     if (FLY.has(cmd.type)) {
       sim.command({ type: cmd.type, unit: Number.isInteger(cmd.unit) ? cmd.unit : undefined, angle: +cmd.angle,
-                    lane: typeof cmd.lane === 'string' ? cmd.lane : undefined, team: team });
+                    lane: typeof cmd.lane === 'string' ? cmd.lane : undefined, index: Number.isInteger(cmd.index) ? cmd.index : undefined,
+                    team: team, ctl: seat });
     } else if (cmd.type === 'build' && typeof cmd.cls === 'string') {
       sim.command({ type: 'build', cls: cmd.cls, team: team });
     }
@@ -99,6 +106,9 @@ function startSimService(bus, opts) {
   bus.subscribe('ctl', cmd => {
     if (!cmd || typeof cmd.type !== 'string') return;
     switch (cmd.type) {
+      case 'fleet': // a player's Fleet Battle draft (the gateway adds the seat)
+        if (Number.isInteger(cmd.seat) && cmd.seat >= 0 && cmd.seat < 8 && cmd.fleet && typeof cmd.fleet === 'object') fleets[cmd.seat] = cmd.fleet;
+        return publishSettings();
       case 'speed':
         if (+cmd.value >= 0.1 && +cmd.value <= 2) speed = +cmd.value;
         return publishSettings();
@@ -187,7 +197,7 @@ function startSimService(bus, opts) {
 // ------------------------------------------------------------ GATEWAY service
 function startGateway(bus, opts) {
   const clients = new Map(); // id -> { res, seat }
-  const seats = [null, null]; // client id flying each team
+  const seats = new Array(MAX_SEATS).fill(null); // client id in each player seat (seat & 1 = team)
   let settings = {};
   const filtered = opts.interestRadius > 0;
 
@@ -224,7 +234,7 @@ function startGateway(bus, opts) {
   });
   bus.subscribe('state.player.*', (snap, subject) => {
     const team = +subject.split('.')[2], text = 'event: snap\ndata: ' + JSON.stringify(snap) + '\n\n';
-    for (const c of clients.values()) if (c.seat === team) write(c, text);
+    for (const c of clients.values()) if (c.seat >= 0 && (c.seat & 1) === team) write(c, text);
   });
   // Performance: the sim's numbers plus what this gateway is sending.
   let perfAt = Date.now();
@@ -238,7 +248,7 @@ function startGateway(bus, opts) {
   });
 
   function takeSeat(id) {
-    for (let t = 0; t < 2; t++) if (seats[t] === null) { seats[t] = id; bus.publish('seat.' + t, { human: true }); return t; }
+    for (let t = 0; t < MAX_SEATS; t++) if (seats[t] === null) { seats[t] = id; bus.publish('seat.' + t, { human: true }); return t; }
     return -1;
   }
   function leave(id) {
@@ -261,6 +271,9 @@ function startGateway(bus, opts) {
     if (FLY.has(cmd.type) || cmd.type === 'build') {
       if (c.seat < 0) return; // spectators can't fly or build
       bus.publish('cmd.' + c.seat, cmd);
+    } else if (cmd.type === 'fleet') {
+      if (c.seat < 0) return;
+      bus.publish('ctl', { type: 'fleet', seat: c.seat, fleet: cmd.fleet });
     } else {
       bus.publish('ctl', cmd);
     }

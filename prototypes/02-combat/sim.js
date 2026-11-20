@@ -96,6 +96,8 @@
     torpedoReload:   { value: 4.0,   min: 0.5, max: 15,   tooltip: 'Seconds between torpedoes.' },
     lockIconSpeed:   { value: 150,   min: 20,  max: 500,  tooltip: 'Lock icon speed (units/s) on a yellow lock. Green is slower, red and white faster.' },
     lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Lock is 100% with the icon inside the target\'s health ring, falling to 1% this far beyond it (0 past that).' },
+    fleetBudget:     { value: 2000,  min: 300, max: 10000, tooltip: 'Fleet Battle: money each player drafts their fleet with. Reset to apply.' },
+    fleetDeploySec:  { value: 20,    min: 3,   max: 120,  tooltip: 'Fleet Battle: every this many seconds, every player brings their next ship in.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -320,7 +322,41 @@
     return r;
   }
 
-  // opts: { mode: 'skirmish' | 'carrier' | 'beat' | 'stress', song, count }
+  // ---- Fleet Battle: draft a fleet with a budget, start with one ship, bring in the next on a shared timer. ----
+  const FLEET_SHIPS = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'missileBoat', 'capital'];
+  const fleetCost = c => CLASSES[c].cost || 600;
+  const FLEET_COLORS = ['#4f8cff', '#ff5a4f', '#3fd0a0', '#ffb43c', '#c77dff', '#5ad8ff', '#ff7ab8', '#9be15d', '#f2f2f2', '#ff8f3c', '#7a8cff', '#e0c068'];
+  const FLEET_PATTERNS = ['solid', 'stripes', 'chevron', 'dots', 'split', 'band'];
+  const NAME_A = ['Crimson', 'Silent', 'Iron', 'Ashen', 'Gilded', 'Hollow', 'Radiant', 'Shattered', 'Black', 'Ember', 'Frost', 'Wandering', 'Vigilant', 'Pale', 'Storm', 'Last'];
+  const NAME_B = ['Lantern', 'Harrow', 'Talon', 'Comet', 'Anvil', 'Viper', 'Halo', 'Tide', 'Spear', 'Cinder', 'Raven', 'Bastion', 'Wake', 'Thorn', 'Veil', 'Meridian'];
+  const NAME_C = ['Armada', 'Flotilla', 'Wing', 'Squadron', 'Fleet', 'Vanguard', 'Host', 'Battlegroup', 'Company', 'Covenant'];
+  // rnd: any () => [0,1) — the client rerolls with Math.random, the sim with its seeded RNG.
+  function randomFleetLook(rnd) {
+    const pick = a => a[Math.floor(rnd() * a.length)];
+    return { name: 'The ' + pick(NAME_A) + ' ' + pick(NAME_B) + ' ' + pick(NAME_C), color: pick(FLEET_COLORS), pattern: pick(FLEET_PATTERNS) };
+  }
+  // Keep only real ships, in order, within budget.
+  function cleanFleet(f, budget, ctl) {
+    const out = { ctl: ctl, name: String((f && f.name) || 'Fleet').slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(f && f.color) ? f.color : FLEET_COLORS[ctl % FLEET_COLORS.length],
+                  pattern: FLEET_PATTERNS.indexOf(f && f.pattern) >= 0 ? f.pattern : 'solid', ships: [] };
+    let left = budget;
+    for (const c of (f && Array.isArray(f.ships) ? f.ships : []).slice(0, 40)) {
+      if (FLEET_SHIPS.indexOf(c) < 0 || fleetCost(c) > left) continue;
+      out.ships.push(c); left -= fleetCost(c);
+    }
+    if (!out.ships.length) out.ships.push('fighter');
+    return out;
+  }
+  // The AI drafts a mixed fleet with the same budget.
+  function aiFleet(rnd, budget, ctl) {
+    const f = randomFleetLook(rnd), plan = ['fighter', 'heavy', 'missileBoat', 'interceptor', 'torpedo', 'bomber', 'aaa', 'capital', 'fighter', 'heavy'];
+    f.ships = [];
+    let left = budget, i = Math.floor(rnd() * plan.length), tries = 0;
+    while (tries++ < 60) { const c = plan[i++ % plan.length]; if (fleetCost(c) <= left) { f.ships.push(c); left -= fleetCost(c); } else if (left < 80) break; }
+    return cleanFleet(f, budget, ctl);
+  }
+
+  // opts: { mode: 'skirmish' | 'carrier' | 'beat' | 'stress' | 'fleet', song, count, fleets: [{ ctl, name, color, pattern, ships }] }
   function Sim(seed, overrides, roster, opts) {
     this.seed = seed >>> 0;
     this.mode = (opts && opts.mode) || 'skirmish';
@@ -347,8 +383,10 @@
     // Per-team control. human[team]: that side is flown by a person (juggle
     // rules: momentum drain, stall) rather than the opposition AI. Single
     // player = blue human, red AI; LAN multiplayer flips red to human.
-    this.held = [-1, -1];
-    this.aim = [0, 0];
+    // Controllers: a seat per player (0-7); team = seat & 1 (even blue, odd red).
+    // Single player is controller 0. Each controller holds one ship at a time.
+    this.held = [-1, -1, -1, -1, -1, -1, -1, -1];
+    this.aim = [0, 0, 0, 0, 0, 0, 0, 0];
     this.human = [true, false];
     // APM matching: ticks of each side's actions (grab / dodge / refocus) over
     // the last 30s; the AI spends a matching budget, one ship re-aim per action.
@@ -385,7 +423,17 @@
     }
 
     // Teams spawn on opposite sides of the safe disc, already moving.
-    const list = roster || (this.mode === 'carrier' ? carrierRoster() : this.stressCount ? stressRoster(this.stressCount) : defaultRoster());
+    // Fleet Battle: every controller's fleet (an AI fleet for a side nobody drafted); each starts with its first ship.
+    this.fleets = [];
+    if (this.mode === 'fleet') {
+      const given = (opts && Array.isArray(opts.fleets)) ? opts.fleets : [];
+      for (const f of given) if (Number.isInteger(f.ctl) && f.ctl >= 0 && f.ctl < 8 && !this.fleets.some(g => g.ctl === f.ctl)) this.fleets.push(cleanFleet(f, this.T.fleetBudget, f.ctl));
+      for (const t of [PLAYER, ENEMY]) if (!this.fleets.some(f => (f.ctl & 1) === t)) this.fleets.push(aiFleet(this.rng, this.T.fleetBudget, t));
+      this.fleets.sort((a, b) => a.ctl - b.ctl);
+      for (const f of this.fleets) { f.hangar = f.ships.slice(); f.next = 0; }
+      this.deployIn = this.T.fleetDeploySec;
+    }
+    const list = roster || (this.mode === 'carrier' ? carrierRoster() : this.stressCount ? stressRoster(this.stressCount) : this.mode === 'fleet' ? [] : defaultRoster());
     // Stress test: each side starts as a block (columns facing the enemy).
     const cols = this.stressCount ? Math.max(4, Math.ceil(Math.sqrt(this.stressCount) / 1.5)) : 0, gap = 34;
     this.units = [];
@@ -409,6 +457,8 @@
       const a = r.cls === 'carrier' ? baseAng : ang;
       this._spawn(r.cls, r.team, Math.cos(a) * dist, Math.sin(a) * dist, baseAng + Math.PI);
     }
+
+    if (this.mode === 'fleet') for (const f of this.fleets) this._deploy(f, true);
 
     // Projectile pool. Fixed-capacity free list; nothing allocates per shot.
     // Free-list pool: O(1) to take a slot, grows in chunks if a huge battle
@@ -493,7 +543,7 @@
   Sim.prototype.setHuman = function (team, on) {
     if (this.human[team] === !!on) return;
     this.human[team] = !!on;
-    if (this.held[team] >= 0) { this.units[this.held[team]].held = false; this.held[team] = -1; }
+    for (let c = team; c < 8; c += 2) if (this.held[c] >= 0) { this.units[this.held[c]].held = false; this.held[c] = -1; }
     for (const u of this.units) if (u.team === team && u.state === ALIVE) { u.momentum = 1; u.stallTimer = 0; }
     this.events.push({ type: 'control', team: team, human: !!on, tick: this.tick });
   };
@@ -512,33 +562,40 @@
       const team = cmd.team | 0;
       if (team !== 0 && team !== 1) continue;
       if (!this.human[team]) continue;
+      const c = Number.isInteger(cmd.ctl) && cmd.ctl >= 0 && cmd.ctl < 8 && (cmd.ctl & 1) === team ? cmd.ctl : team; // controller
+      if (cmd.type === 'nextShip') { // Fleet Battle: pick which hangar ship comes in next
+        const f = this.fleets.find(g => g.ctl === c);
+        if (f && Number.isInteger(cmd.index) && cmd.index >= 0 && cmd.index < f.hangar.length) f.next = cmd.index;
+        continue;
+      }
       if (cmd.type === 'grab') {
         const u = this.units[cmd.unit];
         // One grabbable unit at a time per side, own ships only — targeting stays
         // enemy-only, possession stays friendly-only.
-        if (!u || u.team !== team || u.state !== ALIVE) continue;
-        if (this.held[team] >= 0) this.units[this.held[team]].held = false;
-        this.held[team] = cmd.unit;
-        u.held = true;
-        this.aim[team] = u.heading;
+        if (!u || u.team !== team || u.state !== ALIVE || !this._mayFly(u, c)) continue;
+        if (u.held && u.heldBy !== c) continue; // a teammate is flying it
+        if (this.held[c] >= 0) this.units[this.held[c]].held = false;
+        this.held[c] = cmd.unit;
+        u.held = true; u.heldBy = c;
+        this.aim[c] = u.heading;
         this.events.push({ type: 'grabbed', unit: cmd.unit, team: team, tick: this.tick });
         this.actions[team].push(this.tick);
       } else if (cmd.type === 'aim') {
-        if (typeof cmd.angle === 'number' && isFinite(cmd.angle)) this.aim[team] = cmd.angle;
+        if (typeof cmd.angle === 'number' && isFinite(cmd.angle)) this.aim[c] = cmd.angle;
       } else if (cmd.type === 'release') {
-        if (this.held[team] < 0) continue;
-        const u = this.units[this.held[team]];
+        if (this.held[c] < 0) continue;
+        const u = this.units[this.held[c]];
         u.held = false;
-        u.goal = this.aim[team]; // keeps turning toward it at its own rate after release
+        u.goal = this.aim[c]; // keeps turning toward it at its own rate after release
         u.momentum = 1;
         u.stallTimer = 0;
-        this.events.push({ type: 'released', unit: this.held[team], team: team, tick: this.tick });
-        this.held[team] = -1;
+        this.events.push({ type: 'released', unit: this.held[c], team: team, tick: this.tick });
+        this.held[c] = -1;
       } else if (cmd.type === 'order') {
         // Click-to-move: turn this side's ship toward a direction at its own
         // turn rate. Same effect as a fling: re-energises it (momentum 1).
         const u = this.units[cmd.unit];
-        if (!u || u.team !== team || u.state !== ALIVE || u.held) continue;
+        if (!u || u.team !== team || u.state !== ALIVE || u.held || !this._mayFly(u, c)) continue;
         if (typeof cmd.angle !== 'number' || !isFinite(cmd.angle)) continue;
         u.goal = cmd.angle;
         u.momentum = 1;
@@ -602,10 +659,13 @@
   // Ship a dodge/refocus acts on: the one being held, else the one named in the
   // command (a ship selected with a number key) if it's this side's and alive.
   Sim.prototype._actor = function (cmd, team) {
-    if (this.held[team] >= 0) return this.units[this.held[team]];
+    const c = Number.isInteger(cmd.ctl) && cmd.ctl >= 0 && cmd.ctl < 8 && (cmd.ctl & 1) === team ? cmd.ctl : team;
+    if (this.held[c] >= 0) return this.units[this.held[c]];
     const u = typeof cmd.unit === 'number' ? this.units[cmd.unit] : null;
-    return u && u.team === team && u.state === ALIVE ? u : null;
+    return u && u.team === team && u.state === ALIVE && this._mayFly(u, c) ? u : null;
   };
+  // Fleet Battle: you fly only your own fleet. Other modes: anyone on the side may fly any of its ships.
+  Sim.prototype._mayFly = function (u, c) { return this.mode !== 'fleet' || u.owner === c; };
 
   // --- Destroy the Carrier: economy and building ---
   Sim.prototype.carrierOf = function (team) {
@@ -679,7 +739,7 @@
     if (u.state !== ALIVE) return;
     u.state = CRYSTALLIZING;
     u.crystallizeTimer = 0;
-    if (u.held) { u.held = false; this.held[u.team] = -1; }
+    if (u.held) { u.held = false; this.held[u.heldBy === undefined ? u.team : u.heldBy] = -1; }
     this.events.push({ type: 'crystallizing', unit: u.id, cause: cause, tick: this.tick });
   };
 
@@ -1080,7 +1140,7 @@
       u.dodgeTimer -= dt;
       if (u.dodgeTimer <= 0) u.lockoutTimer = T.dodgeLockoutSec;
     } else if (u.held) {
-      if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], maxTurn * dt);
+      if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.heldBy === undefined ? u.team : u.heldBy], maxTurn * dt);
     } else if (this.human[u.team]) {
       // Unpossessed ship on a human-flown side: the juggle clock runs.
       if (juggles) u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
@@ -1310,8 +1370,27 @@
     this._gridLive = false;
     if (this.mode === 'carrier') this._economy(dt);
     if (this.stressCount && this.tick % 15 === 0) this._reinforce();
+    if (this.mode === 'fleet') this._fleetTick(dt);
 
     this.tick++;
+  };
+
+  // Fleet Battle: bring a fleet's chosen next ship into the fight at its side's rear.
+  Sim.prototype._deploy = function (f, first) {
+    if (!f.hangar.length) return;
+    const k = Math.min(f.next | 0, f.hangar.length - 1), cls = f.hangar.splice(k, 1)[0];
+    f.next = 0;
+    const team = f.ctl & 1, side = team === PLAYER ? -1 : 1, slot = Math.floor(f.ctl / 2);
+    const x = side * (this.T.spawnDist + (first ? 0 : 140)), y = (slot - 1.5) * 110 + (first ? 0 : (this.rng() - 0.5) * 80);
+    const u = this._spawn(cls, team, x, y, team === PLAYER ? 0 : Math.PI);
+    u.owner = f.ctl;
+    if (!first) this.events.push({ type: 'deployed', unit: u.id, ctl: f.ctl, tick: this.tick });
+  };
+  Sim.prototype._fleetTick = function (dt) {
+    this.deployIn -= dt;
+    if (this.deployIn > 0) return;
+    this.deployIn += this.T.fleetDeploySec;
+    for (const f of this.fleets) this._deploy(f, false);
   };
 
   // Stress test: destroyed ships come back as reinforcements at their side's
@@ -1332,7 +1411,7 @@
       fresh.rng = mulberry32((this.seed ^ Math.imul(id + 1, 0x9E3779B1) ^ Math.imul(this.tick + 1, 0x85EBCA6B)) >>> 0);
       this.units[id] = fresh;
       for (const u of this.units) for (const g of u.guns) if (g.targetId === id) { g.targetId = -1; g.lockQ = 0; g.lockCap = 0; }
-      for (let t = 0; t < 2; t++) if (this.held[t] === id) this.held[t] = -1;
+      for (let t = 0; t < 8; t++) if (this.held[t] === id) this.held[t] = -1;
     }
   };
 
@@ -1375,7 +1454,7 @@
       u.guns[0] === u ? 0 : u.guns.map(gunSnap),
       r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
       LANES.indexOf(u.lane), r3(u.activeLeft),
-      u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd),
+      u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd), u.owner,
     ]);
     const proj = [];
     // [.., kind, team, dormant]: dormant = a torpedo still running dumb (enemies can't see it yet)
@@ -1389,6 +1468,8 @@
       apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
       aiApm: [Math.round(this.aiApm(0)), Math.round(this.aiApm(1))],
       mode: this.mode, money: this.money.map(Math.floor), winner: this.winner, song: this.songId,
+      fleets: this.mode === 'fleet' ? this.fleets.map(f => ({ ctl: f.ctl, name: f.name, color: f.color, pattern: f.pattern, hangar: f.hangar, next: f.next })) : undefined,
+      deployIn: this.mode === 'fleet' ? r2(this.deployIn) : undefined,
       queue: this.queue.map(q => q.map(j => [j.cls, r2(j.left)])),
       wrecks: this.wrecks.map(w => [r2(w.x), r2(w.y), w.value, r2(w.ttl)]),
     };
@@ -1421,6 +1502,7 @@
       if (a[21] !== undefined) u.activeLeft = a[21];
       u.ml = a[22] ? { lx: a[22][0], ly: a[22][1], grade: a[22][2], target: a[22][3] } : null;
       u.launchCd = a[23] || 0;
+      if (a[24] !== undefined) u.owner = a[24];
       u.hidden = false;
     });
     while (this.projectiles.length < snap.proj.length && this._growPool(1024)) { /* grow to fit */ }
@@ -1434,6 +1516,7 @@
     this.events = snap.events;
     this._netApm = snap.apm; this._netAiApm = snap.aiApm;
     if (snap.mode) this.mode = snap.mode;
+    if (snap.fleets) { this.fleets = snap.fleets; this.deployIn = snap.deployIn; }
     if (snap.song && SONGS[snap.song] && this.songId !== snap.song) { this.song = SONGS[snap.song]; this.songId = snap.song; }
     if (snap.money) this.money = snap.money;
     if (snap.winner !== undefined) this.winner = snap.winner;
@@ -1459,7 +1542,8 @@
     return (h >>> 0).toString(16);
   };
 
-  return { iconRadius: iconRadius, lockZoneRadius: lockZoneRadius, Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
+  return { randomFleetLook: randomFleetLook, FLEET_SHIPS: FLEET_SHIPS, FLEET_COLORS: FLEET_COLORS, FLEET_PATTERNS: FLEET_PATTERNS, fleetCost: fleetCost,
+           iconRadius: iconRadius, lockZoneRadius: lockZoneRadius, Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
            SONGS: SONGS, LANES: LANES, DEFAULT_LANE: DEFAULT_LANE,
            mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
 });
