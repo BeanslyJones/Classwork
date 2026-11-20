@@ -156,3 +156,31 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 ## 18. No stalling
 - Ships never stall or die from being ignored. An ignored ship slows to
   cruising speed and drifts. (Stalling came from the original brief; dropped.)
+
+## 19. Architecture: massively-multiplayer ready (Massdrift-style)
+- Target: compatible with a sharded MMO architecture as described by the owner
+  for Massdrift — two-phase tick, sharding by player (not by place), separate
+  collision/visibility workers, everything over a message bus (NATS).
+- In this codebase that means: two-phase tick (think from a frozen snapshot,
+  then resolve), per-ship RNG, players own ships, a spatial grid for
+  neighbour queries, a message-bus layer the LAN server uses, and per-player
+  interest filtering of state.
+- Built first, before the modes below.
+
+## 20. Beat mode (planned, after the architecture)
+- The music is a shared clock. Ships (a class or a specific ship) are assigned
+  to instrument lanes. A note in a ship's lane gives that ship a **time slice**
+  (it moves, its cooldowns tick, it fires if reloaded). Ship cooldowns run on
+  the ship's own clock — a note right after firing does not fire again until
+  the gun is reloaded AND another note arrives.
+- Movement between slices is **interpolated/tweened** so ships glide.
+- Pre-battle planning screen: the song summarised per lane (note timeline,
+  percentages); drag ships onto lanes to plan attack and defence.
+- Instruments: hi-hat, snare, kick, crash, bass line, keys/piano (pitch picks
+  the ship, chords trigger several), arpeggio, pads (hold = active), lead,
+  claps; sine wave as a continuous modifier rather than a trigger.
+- Songs: built-in generated songs first, MIDI import after.
+
+## 21. Turn-based mode (planned)
+- Plan orders while paused, then the battle runs for one turn. Ships move
+  speed x turn length; fire rate = turn length / cooldown.
