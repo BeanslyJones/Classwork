@@ -37,9 +37,9 @@ const STATIC = {
 const WX_LEAD = 2;     // keyframes the weather runs ahead; screens never get further ahead than this
 const WX_PER_TICK = 3; // battle ticks per weather tick (30 Hz battle, 10 Hz weather)
 // Events screens need for effects and sound (everything else stays server-side).
-const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus', 'note', 'lane']);
+const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus', 'note', 'lane', 'launch']);
 const MODES = ['skirmish', 'carrier', 'beat', 'stress'];
-const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order', 'lane']);
+const FLY = new Set(['grab', 'aim', 'release', 'dodge', 'refocus', 'order', 'lane', 'launchHold', 'launchRelease']);
 
 // ---------------------------------------------------------------- SIM service
 function startSimService(bus, opts) {

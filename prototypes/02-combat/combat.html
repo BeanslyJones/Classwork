@@ -15,6 +15,11 @@
   #dodgeBtn { position: absolute; bottom: 22px; right: 22px; z-index: 8; font-size: 15px; font-weight: 700;
               padding: 18px 22px; border-radius: 50px; background: #23304a; border: 1px solid #3a4a6a; color: #cdd6e4; }
   #dodgeBtn:active { background: #3a4a6a; }
+  #launchBtn { position: absolute; bottom: 160px; right: 26px; z-index: 8; font-size: 13px; font-weight: 700; display: none;
+               padding: 14px 16px; border-radius: 40px; background: #3a1d1d; border: 1px solid #8a4a3a; color: #ffd9cc; touch-action: none; }
+  #launchBtn.show { display: block; }
+  #launchBtn.held { background: #6a2a22; }
+  #launchBtn.cool { opacity: .45; }
   #focusBtn { position: absolute; bottom: 96px; right: 30px; z-index: 8; font-size: 13px; font-weight: 700;
               padding: 12px 14px; border-radius: 40px; background: #1d2638; border: 1px solid #3a4a6a; color: #cdd6e4; }
   #rotate { display: none; position: fixed; inset: 0; z-index: 50; background: #0b0e14; color: #cdd6e4;
@@ -244,6 +249,7 @@
         <input type="range" id="camZoomIn"></div>
     </div>
     <button id="dodgeBtn">DODGE</button>
+    <button id="launchBtn" title="Hold: the lock icon bounces in the cone. Let go to launch (X)">MISSILE</button>
     <button id="focusBtn" title="Retarget: drop the lock so the next enemy into the arc is targeted (T or F)">RETARGET</button>
     <div id="speedBox">
       <label>Game speed <span id="speedVal">0.5×</span></label>
@@ -260,7 +266,10 @@
       Guns are automatic and lock the first enemy to enter the arc. Where it entered sets the lock's ceiling:
       dead centre can reach a full lock, the edge stays weak. Holding it in the arc builds the lock, which
       tightens spread, leads the target and speeds up reloads. Lock line: green = centre entry, red = edge;
-      brighter = stronger lock. Torpedo bombers (6) fire slow torpedoes that do 3× to capitals.
+      brighter = stronger lock. MISSILES: select a missile boat, torpedo bomber or Heavy and hold MISSILE (or X):
+      a lock icon bounces around the cone (white no target, red/yellow/green = how central the target is; worse = faster).
+      Let go with the icon on the target to lock it: missiles track and lead, rockets fly where the icon was, torpedoes
+      run dumb then hunt. They can hit your own ships.
       One energy pool = health + ammo + boost. T (or F): retarget. Click/tap a ship or press 1–9 to select it; click the map to send it that way (or drag the ship). Click the selected ship again or Esc to deselect. R: restart. N: new seed.
       Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
       Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
@@ -411,6 +420,32 @@ document.getElementById('btnSeed').addEventListener('click', () => restart(true)
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
 document.getElementById('dodgeBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'dodge', unit: selected >= 0 ? selected : undefined }); });
 document.getElementById('focusBtn').addEventListener('pointerdown', e => { e.stopPropagation(); act({ type: 'refocus', unit: selected >= 0 ? selected : undefined }); });
+// Launch mini-game: hold to start the lock icon, let go to fire.
+const launchBtn = document.getElementById('launchBtn');
+let launchUnit = -1;
+function launchDown() {
+  const f = focusUnit();
+  if (!f || !CLASSES[f.cls].launcher || launchUnit >= 0) return;
+  launchUnit = f.id; launchBtn.classList.add('held');
+  act({ type: 'launchHold', unit: f.id });
+}
+function launchUp() {
+  if (launchUnit < 0) return;
+  act({ type: 'launchRelease', unit: launchUnit });
+  launchUnit = -1; launchBtn.classList.remove('held');
+}
+launchBtn.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); launchBtn.setPointerCapture(e.pointerId); launchDown(); });
+launchBtn.addEventListener('pointerup', e => { e.stopPropagation(); launchUp(); });
+launchBtn.addEventListener('pointercancel', launchUp);
+window.addEventListener('keydown', e => { if ((e.key === 'x' || e.key === 'X') && !e.repeat) launchDown(); });
+window.addEventListener('keyup', e => { if (e.key === 'x' || e.key === 'X') launchUp(); });
+function updateLaunchBtn() {
+  const f = focusUnit(), kind = f && CLASSES[f.cls].launcher;
+  launchBtn.classList.toggle('show', !!kind);
+  if (!kind) return;
+  launchBtn.textContent = kind.toUpperCase() + (f.launchCd > 0 ? ' ' + f.launchCd.toFixed(1) : '');
+  launchBtn.classList.toggle('cool', f.launchCd > 0 && launchUnit < 0);
+}
 document.getElementById('portraitOk').addEventListener('click', () => {
   document.body.classList.add('portrait-ok');
   try { localStorage.setItem('rw02.portraitOk', '1'); } catch (e) {}
@@ -634,6 +669,10 @@ function pushFlashes(events) {
     } else if (e.type === 'fired') {
       const u = sim.units[e.unit]; if (!u) continue;
       const a = earAt(u.x, u.y); SFX.shot(u.cls, a.pan, a.vol);
+    } else if (e.type === 'launch') {
+      const u = sim.units[e.unit]; if (!u) continue;
+      const a = earAt(u.x, u.y); SFX.shot(e.kind === 'rocket' ? 'heavy' : 'torpedo', a.pan, a.vol);
+      if (u.team === MINE() && e.target >= 0) floats.push({ x: u.x, y: u.y, text: e.lock >= 0.6 ? 'LOCK!' : 'lock ' + Math.round(e.lock * 100) + '%', color: e.lock >= 0.6 ? '#4ade80' : '#ffd23c', age: 0 });
     } else if (e.type === 'crystallizing') {
       const u = sim.units[e.unit]; if (!u) continue;
       const a = earAt(u.x, u.y); SFX.explosion(CLASSES[u.cls].size, a.pan, Math.max(a.vol, 0.15));
@@ -768,6 +807,7 @@ const HULLS = {
   bomber:      [[1.0, 0], [0.35, 0.35], [-0.35, 1.1], [-0.8, 1.05], [-0.6, 0.4], [-0.85, 0.3], [-0.7, 0]],
   aaa:         [[1.0, 0], [0.7, 0.45], [0.2, 0.55], [0.05, 0.95], [-0.45, 0.95], [-0.55, 0.6], [-0.95, 0.45], [-0.95, 0]],
   torpedo:     [[0.75, 0], [0.85, 0.16], [1.3, 0.22], [1.3, 0.55], [0.6, 0.6], [-0.2, 0.92], [-0.9, 0.82], [-0.7, 0.3], [-0.9, 0]],
+  missileBoat: [[1.15, 0], [0.9, 0.2], [0.55, 0.22], [0.55, 0.78], [0.0, 0.88], [-0.65, 0.88], [-0.7, 0.38], [-1.0, 0.32], [-1.0, 0]],
   capital:     [[1.3, 0], [1.1, 0.35], [0.5, 0.45], [0.3, 0.7], [-0.3, 0.7], [-0.5, 0.55], [-1.0, 0.55], [-1.1, 0.3], [-1.0, 0]],
   carrier:     [[1.25, 0], [1.15, 0.3], [0.85, 0.42], [0.8, 0.62], [-0.2, 0.62], [-0.3, 0.5], [-0.95, 0.5], [-1.15, 0.32], [-1.1, 0]],
 };
@@ -914,6 +954,7 @@ function render(dtReal) {
      foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — ' + again + '</div>' : '');
   restorePos();
   updateBuildBar();
+  updateLaunchBtn();
   updateLaneLights();
   if (carrierMode && sim.winner >= 0 && !bannerShown) showBanner(sim.winner === MINE() ? 'VICTORY' : 'DEFEAT',
     sim.winner === MINE() ? 'The enemy carrier is destroyed.' : 'Your carrier was destroyed.', sim.winner === MINE() ? '#5fd08a' : '#e85a4a');
@@ -1099,6 +1140,31 @@ function drawWorld() {
     }
   }
 
+  // Launch mini-game: the lock icon bouncing in the cone, coloured by lock grade.
+  const GRADE_COL = ['#ffffff', '#ff4a3c', '#ffd23c', '#4ade80'];
+  for (const u of sim.units) {
+    if (!u.ml || u.state !== 'alive' || u.team !== MINE()) continue;
+    const c = Math.cos(u.heading), sn = Math.sin(u.heading);
+    const ix = u.x + u.ml.lx * c - u.ml.ly * sn, iy = u.y + u.ml.lx * sn + u.ml.ly * c, col = GRADE_COL[u.ml.grade];
+    const cls = CLASSES[u.cls];
+    ctx.beginPath(); ctx.moveTo(u.x, u.y); // the cone it bounces in
+    ctx.arc(u.x, u.y, cls.coneRange, u.heading - cls.coneHalf, u.heading + cls.coneHalf); ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke();
+    const t = u.ml.target >= 0 ? sim.units[u.ml.target] : null;
+    if (t && t.state === 'alive') {
+      const rr = sim.T.unitRadius * CLASSES[t.cls].size + 10;
+      ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+      ctx.beginPath(); ctx.arc(t.x, t.y, sim.T.lockCatch, 0, 7); ctx.setLineDash([3 / cam.scale, 5 / cam.scale]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke(); ctx.setLineDash([]);
+    }
+    const r = 10 / cam.scale;
+    ctx.beginPath(); ctx.arc(ix, iy, r, 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2.5 / cam.scale; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ix - r * 1.6, iy); ctx.lineTo(ix - r * 0.5, iy); ctx.moveTo(ix + r * 0.5, iy); ctx.lineTo(ix + r * 1.6, iy);
+    ctx.moveTo(ix, iy - r * 1.6); ctx.lineTo(ix, iy - r * 0.5); ctx.moveTo(ix, iy + r * 0.5); ctx.lineTo(ix, iy + r * 1.6);
+    ctx.stroke();
+  }
+
   // Lock lines (your ships, every gun): colour = entry quality, strength = current lock.
   for (const u of sim.units) {
     if (u.team !== MINE() || u.state !== 'alive' || !focusOnly(u)) continue;
@@ -1176,7 +1242,14 @@ function drawWorld() {
   // Projectiles (torpedoes: big, slow, red-orange with a trail)
   for (const p of sim.projectiles) {
     if (!p.active) continue;
-    if (p.vsCap > 1) {
+    if (p.kind === 1 || p.kind === 2) { // missile: white dart + smoke; rocket: hot orange streak
+      const sp = Math.hypot(p.vx, p.vy) || 1, L = p.kind === 1 ? 18 : 24;
+      ctx.beginPath();
+      ctx.moveTo(p.x - p.vx / sp * L, p.y - p.vy / sp * L); ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = p.kind === 1 ? 'rgba(220,230,255,0.45)' : 'rgba(255,170,60,0.6)'; ctx.lineWidth = 2.5 / cam.scale; ctx.stroke();
+      ctx.fillStyle = p.kind === 1 ? '#f4f7ff' : '#ffb44a';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.kind === 1 ? 3.5 : 2.5, 0, 7); ctx.fill();
+    } else if (p.kind === 3 || p.vsCap > 1) {
       const sp = Math.hypot(p.vx, p.vy) || 1;
       ctx.beginPath();
       ctx.moveTo(p.x - p.vx / sp * 16, p.y - p.vy / sp * 16); ctx.lineTo(p.x, p.y);
@@ -1265,9 +1338,10 @@ const SHIP_INFO = {
   aaa:         { name: 'BULWARK',  role: 'Flak platform',    blurb: 'Widest firing arc and rapid flak. Slow — let them come to it.' },
   torpedo:     { name: 'HARPOON',  role: 'Torpedo bomber',   blurb: 'Slow torpedoes that wreck capitals. Small ships can dodge them.' },
   capital:     { name: 'GRAYZER',  role: 'Capital dropship', blurb: 'Your dropship, one per side. A turret on each flank and a battery that recharges nearby allies.' },
+  missileBoat: { name: 'QUIVER',   role: 'Missile boat',     blurb: 'No guns. Hold MISSILE: catch the target with the bouncing lock icon, let go, and the missile hunts it down.' },
   carrier:     { name: 'HIVE',     role: 'Carrier',          blurb: 'Builds your ships in Destroy the Carrier. No guns. Lose it and you lose.' },
 };
-const GARAGE_ORDER = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'capital', 'carrier'];
+const GARAGE_ORDER = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'missileBoat', 'capital', 'carrier'];
 let garageAnim = null;
 
 function shipStats(k) {

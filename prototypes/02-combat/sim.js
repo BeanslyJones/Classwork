@@ -81,6 +81,21 @@
     wreckSec:        { value: 45,    min: 5,   max: 300,  tooltip: 'Seconds a wreck stays before drifting off.' },
     maxShips:        { value: 16,    min: 4,   max: 60,   tooltip: 'Destroy the Carrier: most ships a side may have at once (carrier and Grayzer included).' },
     beatSliceSec:    { value: 0.25,  min: 0.03, max: 1,   tooltip: 'Beat mode: ship-seconds a note gives the ships on its lane (they move, reload and fire only while their slice runs).' },
+    // Missiles, rockets, torpedoes (fired with the lock mini-game). They can hit allies.
+    missileSpeed:    { value: 175,   min: 60,  max: 400,  tooltip: 'Missile speed (units/s).' },
+    missileTurn:     { value: 3.0,   min: 0.2, max: 8,    tooltip: 'How hard a missile can turn (rad/s) at a perfect lock. A worse lock turns less.' },
+    missileDamage:   { value: 30,    min: 5,   max: 120,  tooltip: 'Missile blast damage.' },
+    missileReload:   { value: 3.0,   min: 0.3, max: 12,   tooltip: 'Seconds between missiles.' },
+    rocketSpeed:     { value: 280,   min: 80,  max: 600,  tooltip: 'Rocket speed. Rockets are dumb: they fly where the lock icon was.' },
+    rocketDamage:    { value: 18,    min: 2,   max: 80,   tooltip: 'Rocket blast damage.' },
+    rocketReload:    { value: 1.2,   min: 0.2, max: 8,    tooltip: 'Seconds between rockets.' },
+    torpedoSpeed:    { value: 105,   min: 40,  max: 300,  tooltip: 'Torpedo speed.' },
+    torpedoArmDist:  { value: 170,   min: 0,   max: 600,  tooltip: 'Torpedoes run dumb this far, then go active and search for a target.' },
+    torpedoSearch:   { value: 280,   min: 50,  max: 800,  tooltip: 'How far an active torpedo can see a target (ahead of it).' },
+    torpedoTurn:     { value: 1.3,   min: 0.1, max: 5,    tooltip: 'How hard an active torpedo turns toward its target.' },
+    torpedoReload:   { value: 4.0,   min: 0.5, max: 15,   tooltip: 'Seconds between torpedoes.' },
+    lockIconSpeed:   { value: 150,   min: 20,  max: 500,  tooltip: 'Lock icon speed (units/s) on a yellow lock. Green is slower, red and white faster.' },
+    lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Let go with the icon within this distance of the target to lock it. Closer = better tracking.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -112,7 +127,7 @@
     // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
     // sidestep but a lumbering capital can't. vsCapital multiplies damage on
     // capitals; projTtl lets the slow torpedo actually reach its range.
-    torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1, cost: 160, buildTime: 10,
+    torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1, cost: 160, buildTime: 10, launcher: 'torpedo', manualOnly: true,
                    coneHalf: 0.55, coneRange: 300, cooldown: 1.6, shotCost: 4.67, damage: 38.8, aoe: 28, projSpeed: 105, projTtl: 3.71,
                    vsCapital: 4.0 },
     // Capital (the Grayzer, the player's dropship; one per side). Two side
@@ -147,7 +162,24 @@
                      { type: 'vent',   x: -0.3,  y: 0.7,   r: 0.3 },
                      { type: 'vent',   x: -0.3,  y: -0.7,  r: 0.3 },
                    ] },
+    // Missile boat: no guns, only tracking missiles fired with the lock mini-game.
+    missileBoat: { speed: 100, turnRadius: 140, energyMax: 110, turret: false, gunTurn: 0, size: 1.1, cost: 170, buildTime: 10,
+                   launcher: 'missile', manualOnly: true,
+                   coneHalf: 0.6, coneRange: 380, cooldown: 1, shotCost: 0, damage: 0, aoe: 0, projSpeed: 175, projTtl: 1 },
   };
+  // Launchers (rockets also ride on the Heavy alongside its guns).
+  CLASSES.heavy.launcher = 'rocket';
+  // Ordnance from the lock mini-game. seek: 'lock' = tracks the locked target
+  // and leads it; 'none' = dumb; 'search' = dumb until armDist, then hunts.
+  const ORD_KIND = { missile: 1, rocket: 2, torpedo: 3 };
+  function ordnance(T, kind) {
+    if (kind === 'missile') return { speed: T.missileSpeed, turn: T.missileTurn, ttl: 4.5, damage: T.missileDamage, aoe: 30, reload: T.missileReload, cost: 6, vsCapital: 1.5 };
+    if (kind === 'rocket') return { speed: T.rocketSpeed, turn: 0, ttl: 1.6, damage: T.rocketDamage, aoe: 24, reload: T.rocketReload, cost: 3, vsCapital: 1 };
+    return { speed: T.torpedoSpeed, turn: T.torpedoTurn, ttl: 6, damage: 38.8, aoe: 30, reload: T.torpedoReload, cost: 6, vsCapital: 4.0,
+             armDist: T.torpedoArmDist, search: T.torpedoSearch };
+  }
+  const GRADE_SPEED = [1.7, 1.7, 1.0, 0.55]; // icon speed by lock grade: none, red, yellow, green
+  const GRADE_LOCK = [0, 0.5, 0.8, 1];      // how much a caught lock is worth by grade
   const CLASS_LIST = Object.keys(CLASSES); // stable order: network class codes
   const BUILDABLE = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo'];
   const isCapitalHull = cls => !!(CLASSES[cls].turret || CLASSES[cls].noGuns); // big ships: capital ordnance + weak points
@@ -158,7 +190,7 @@
   // '.' = rest. Pitched lanes (bass, keys) carry a note number per hit.
   const LANES = ['kick', 'snare', 'hat', 'bass', 'keys', 'crash'];
   const DEFAULT_LANE = { capital: 'kick', carrier: 'kick', heavy: 'snare', bomber: 'snare', fighter: 'hat',
-                         interceptor: 'hat', torpedo: 'bass', aaa: 'keys' };
+                         interceptor: 'hat', torpedo: 'bass', aaa: 'keys', missileBoat: 'bass' };
   const SONGS = {
     assault: {
       name: 'Assault', bpm: 124,
@@ -256,10 +288,10 @@
     return [
       { cls: 'fighter', team: PLAYER }, { cls: 'bomber', team: PLAYER },
       { cls: 'heavy', team: PLAYER }, { cls: 'interceptor', team: PLAYER },
-      { cls: 'capital', team: PLAYER }, { cls: 'torpedo', team: PLAYER },
+      { cls: 'capital', team: PLAYER }, { cls: 'torpedo', team: PLAYER }, { cls: 'missileBoat', team: PLAYER },
       { cls: 'fighter', team: ENEMY }, { cls: 'bomber', team: ENEMY },
       { cls: 'heavy', team: ENEMY }, { cls: 'interceptor', team: ENEMY },
-      { cls: 'capital', team: ENEMY }, { cls: 'torpedo', team: ENEMY },
+      { cls: 'capital', team: ENEMY }, { cls: 'torpedo', team: ENEMY }, { cls: 'missileBoat', team: ENEMY },
     ];
   }
   // Destroy the Carrier: carrier + Grayzer + a small starting wing per side.
@@ -272,7 +304,7 @@
   }
 
   // Stress test: `count` ships per side, mostly small craft, a Grayzer every 50.
-  const STRESS_MIX = ['fighter', 'fighter', 'interceptor', 'heavy', 'fighter', 'bomber', 'interceptor', 'torpedo', 'aaa', 'fighter'];
+  const STRESS_MIX = ['fighter', 'missileBoat', 'interceptor', 'heavy', 'fighter', 'bomber', 'interceptor', 'torpedo', 'aaa', 'fighter'];
   function stressRoster(count) {
     const r = [];
     for (const team of [PLAYER, ENEMY]) for (let i = 0; i < count; i++) {
@@ -387,7 +419,8 @@
   Sim.prototype._growPool = function (n) {
     const start = this.projectiles.length, end = Math.min(MAX_PROJECTILES, start + n);
     for (let i = start; i < end; i++) {
-      this.projectiles.push({ i: i, active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1 });
+      this.projectiles.push({ i: i, active: false, x: 0, y: 0, vx: 0, vy: 0, ttl: 0, owner: -1, team: -1, damage: 0, aoe: 0, vsCap: 1,
+                              kind: 0, target: -1, turn: 0, speed: 0, arm: 0, search: 0, ff: false });
     }
     for (let i = end - 1; i >= start; i--) this._free.push(i); // lowest index handed out first
     return end > start;
@@ -427,6 +460,8 @@
       lane: DEFAULT_LANE[clsName] || 'kick', // beat mode: the instrument that gives this ship its time
       activeLeft: 0,   // beat mode: ship-seconds left in the current slice
       shipTime: 0,     // beat mode: total ship-seconds this ship has had
+      ml: null,        // lock mini-game while the launch button is held: { lx, ly, dir, grade, target }
+      launchCd: 0, aiRelease: 0,
     };
     // Guns: turrets carry their own state; a fixed-gun ship's one gun is itself.
     if (cls.turrets) {
@@ -503,6 +538,12 @@
         u.stallTimer = 0;
         this.events.push({ type: 'ordered', unit: u.id, team: team, tick: this.tick });
         this.actions[team].push(this.tick);
+      } else if (cmd.type === 'launchHold') {
+        const u = this._actor(cmd, team);
+        if (u && u.state === ALIVE && CLASSES[u.cls].launcher && !u.ml && u.launchCd <= 0) this._mlStart(u);
+      } else if (cmd.type === 'launchRelease') {
+        const u = this._actor(cmd, team);
+        if (u && u.ml) this._mlRelease(u);
       } else if (cmd.type === 'dodge') {
         const u = this._actor(cmd, team);
         if (!u || u.state !== ALIVE || u.dodgeTimer > 0 || u.lockoutTimer > 0) continue;
@@ -682,7 +723,123 @@
     p.damage = cls.damage; p.aoe = cls.aoe;
     p.ttl = cls.projTtl || this.T.projTtlSec;
     p.vsCap = cls.vsCapital || 1;
+    p.kind = 0; p.target = -1; p.turn = 0; p.ff = false;
     this.poolStats.fired++;
+  };
+
+  // ---- Lock mini-game: hold to start the icon bouncing in the cone, let go to launch. ----
+  // The target is the enemy closest to the cone's centre line (ties: the nearer one).
+  // Grade = where it sits in the cone: 3 green centre, 2 yellow, 1 red edge, 0 none.
+  Sim.prototype._mlTarget = function (u) {
+    const cls = CLASSES[u.cls];
+    let best = -1, bestOff = Infinity, bestD = Infinity;
+    // Near-equal angles (within 0.03 rad) count as a tie: the nearer ship wins, then the lower id.
+    const consider = v => {
+      if (v.state !== ALIVE || v.team === u.team) return;
+      const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy);
+      if (d > cls.coneRange) return;
+      const off = Math.abs(wrapAngle(Math.atan2(dy, dx) - u.heading));
+      if (off > cls.coneHalf) return;
+      const tie = Math.abs(off - bestOff) <= 0.03;
+      if ((!tie && off < bestOff) || (tie && (d < bestD || (d === bestD && v.id < best)))) { best = v.id; bestOff = off; bestD = d; }
+    };
+    if (this._gridLive || this.tick > 0) this.grid.query(u.x, u.y, cls.coneRange + 300, id => consider(this.units[id])); // +300: ships move during the tick
+    else for (const v of this.units) consider(v);
+    const h = cls.coneHalf;
+    return { target: best, grade: best < 0 ? 0 : bestOff < h / 3 ? 3 : bestOff < 2 * h / 3 ? 2 : 1 };
+  };
+  Sim.prototype._mlStart = function (u) {
+    const t = this._mlTarget(u);
+    u.ml = { lx: 0, ly: 0, dir: (u.rng() * 2 - 1) * CLASSES[u.cls].coneHalf * 0.85, grade: t.grade, target: t.target };
+  };
+  Sim.prototype._mlMove = function (u, dt) {
+    const cls = CLASSES[u.cls], m = u.ml, t = this._mlTarget(u);
+    m.grade = t.grade; m.target = t.target;
+    const sp = this.T.lockIconSpeed * GRADE_SPEED[m.grade];
+    let vx = Math.cos(m.dir) * sp, vy = Math.sin(m.dir) * sp;
+    m.lx += vx * dt; m.ly += vy * dt;
+    const R = cls.coneRange, H = cls.coneHalf, r = Math.hypot(m.lx, m.ly);
+    if (r > R) { // bounce off the far arc
+      const nx = m.lx / r, ny = m.ly / r, k = vx * nx + vy * ny;
+      vx -= 2 * k * nx; vy -= 2 * k * ny; m.lx = nx * R * 0.999; m.ly = ny * R * 0.999;
+    }
+    const a = Math.atan2(m.ly, m.lx);
+    if (r > 1 && Math.abs(a) > H) { // bounce off a cone edge
+      const e = a > 0 ? H : -H, ex = Math.cos(e), ey = Math.sin(e), k = vx * ex + vy * ey, rr = Math.hypot(m.lx, m.ly);
+      vx = 2 * k * ex - vx; vy = 2 * k * ey - vy;
+      m.lx = Math.cos(e * 0.995) * rr; m.ly = Math.sin(e * 0.995) * rr;
+    }
+    m.dir = Math.atan2(vy, vx);
+  };
+  Sim.prototype._mlRelease = function (u) {
+    const m = u.ml, kind = CLASSES[u.cls].launcher, o = ordnance(this.T, kind);
+    u.ml = null;
+    const c = Math.cos(u.heading), sn = Math.sin(u.heading);
+    const ix = u.x + m.lx * c - m.ly * sn, iy = u.y + m.lx * sn + m.ly * c;
+    let lock = 0;
+    const t = m.target >= 0 ? this.units[m.target] : null;
+    if (t && t.state === ALIVE) lock = Math.max(0, 1 - Math.hypot(t.x - ix, t.y - iy) / this.T.lockCatch) * GRADE_LOCK[m.grade];
+    // Fly toward the icon (a perfectly caught lock flies at the target itself).
+    const ax = lock > 0 ? t.x : ix, ay = lock > 0 ? t.y : iy;
+    const angle = (Math.abs(ax - u.x) + Math.abs(ay - u.y) < 1) ? u.heading : Math.atan2(ay - u.y, ax - u.x);
+    if (!this._free.length && !this._growPool(this.projectiles.length)) { this.poolStats.dropped++; return; }
+    const p = this.projectiles[this._free.pop()], ur = this.T.unitRadius * CLASSES[u.cls].size;
+    p.active = true; p.x = u.x + Math.cos(angle) * ur; p.y = u.y + Math.sin(angle) * ur;
+    p.vx = Math.cos(angle) * o.speed; p.vy = Math.sin(angle) * o.speed; p.speed = o.speed;
+    p.owner = u.id; p.team = u.team; p.damage = o.damage; p.aoe = o.aoe; p.ttl = o.ttl; p.vsCap = o.vsCapital;
+    p.kind = ORD_KIND[kind]; p.ff = true;
+    p.target = kind === 'missile' && lock > 0 ? t.id : -1;
+    p.turn = kind === 'missile' ? o.turn * lock : kind === 'torpedo' ? o.turn : 0;
+    p.arm = kind === 'torpedo' ? o.armDist : 0; p.search = kind === 'torpedo' ? o.search : 0;
+    u.launchCd = o.reload; u.energy -= o.cost;
+    this.poolStats.fired++;
+    this.events.push({ type: 'launch', unit: u.id, kind: kind, lock: Math.round(lock * 100) / 100, grade: m.grade, target: p.target, tick: this.tick });
+  };
+  // Every launcher ship, in id order: reload, move held icons, and let the AI play.
+  Sim.prototype._launchers = function (dt) {
+    for (const u of this.units) {
+      const cls = CLASSES[u.cls];
+      if (!cls.launcher) continue;
+      if (u.state !== ALIVE) { u.ml = null; continue; }
+      if (this.song && u.activeLeft <= 0) continue; // beat mode: only inside its slice
+      if (u.launchCd > 0) u.launchCd -= dt;
+      if (!this.human[u.team] && !u.ml && u.launchCd <= 0 && u.energy > cls.energyMax * 0.25 && this._mlTarget(u).target >= 0) {
+        this._mlStart(u); // AI: hold for a random moment, then let go
+        u.aiRelease = this.tick + Math.round((0.35 + u.rng() * 1.3) * this.T.tickRate);
+      }
+      if (u.ml) {
+        this._mlMove(u, dt);
+        if (!this.human[u.team] && this.tick >= u.aiRelease) this._mlRelease(u);
+      }
+    }
+  };
+
+  // Guided flight: missiles chase their lock (leading it), torpedoes run dumb
+  // until armed, then search ahead for the best target (capitals first).
+  Sim.prototype._guide = function (p, dt) {
+    if (p.kind === 3 && p.target < 0) {
+      p.arm -= p.speed * dt;
+      if (p.arm <= 0) {
+        const head = Math.atan2(p.vy, p.vx);
+        let best = -1, bestS = Infinity;
+        this.gridNow.query(p.x, p.y, p.search, id => {
+          const v = this.units[id];
+          if (v.state !== ALIVE || v.team === p.team) return;
+          const d = Math.hypot(v.x - p.x, v.y - p.y);
+          if (d > p.search || Math.abs(wrapAngle(Math.atan2(v.y - p.y, v.x - p.x) - head)) > 1.0) return;
+          const sc = d * (isCapitalHull(v.cls) ? 0.5 : 1);
+          if (sc < bestS || (sc === bestS && id < best)) { bestS = sc; best = id; }
+        });
+        p.target = best;
+      }
+    }
+    if (p.target < 0 || p.turn <= 0) return;
+    const t = this.units[p.target];
+    if (!t || t.state !== ALIVE) { p.target = -1; return; }
+    const d = Math.hypot(t.x - p.x, t.y - p.y), lead = d / p.speed; // aim where it will be
+    const want = Math.atan2(t.y + t.vy * lead - p.y, t.x + t.vx * lead - p.x), cur = Math.atan2(p.vy, p.vx);
+    const turn = Math.max(-p.turn * dt, Math.min(p.turn * dt, wrapAngle(want - cur)));
+    p.vx = Math.cos(cur + turn) * p.speed; p.vy = Math.sin(cur + turn) * p.speed;
   };
 
   Sim.prototype._weakFlag = function (u, type) {
@@ -717,7 +874,8 @@
     for (const id of hits) {
       const u = this.units[id];
       if (u.state !== ALIVE) continue;
-      if (u.team === p.team && !this.T.friendlyFire) continue; // FF is a separate toggle, off
+      if (u.team === p.team && !this.T.friendlyFire && !p.ff) continue; // FF toggle (ordnance always can)
+      if (p.ff && u.id === p.owner) continue;
       const ur = this.T.unitRadius * CLASSES[u.cls].size;
       const d = Math.hypot(u.x - p.x, u.y - p.y);
       if (d < p.aoe + ur) {
@@ -812,7 +970,7 @@
       g.lockQ = Math.min(g.lockCap, g.lockQ + g.lockCap * (1 - T.lockStartFrac) * dt / T.lockTimeFull);
       // Cooldown only ticks with a valid target in the cone; a better lock reloads faster.
       g.cooldown -= dt * (1 + T.fireRateBonus * g.lockQ);
-      if (g.cooldown <= 0 && u.energy > cls.energyMax * T.autoFireFloor + cls.shotCost) {
+      if (g.cooldown <= 0 && !cls.manualOnly && u.energy > cls.energyMax * T.autoFireFloor + cls.shotCost) {
         const spread = T.lockSpreadMax * (1 - g.lockQ);
         // Fixed guns can only nudge the shot within their arc; turrets fire down the barrel.
         const base = isTurret ? g.gunAngle
@@ -1092,6 +1250,7 @@
       this._fireProjectile(f.u, f.angle, f.g, f);
       this.events.push({ type: 'fired', unit: f.u.id, gun: f.gi, target: f.g.targetId, spread: f.spread, lockQ: f.g.lockQ, tick: this.tick });
     }
+    this._launchers(dt);
     this._charges.sort((a, b) => a.to - b.to || a.from - b.from);
     for (const c of this._charges) {
       const v = this.units[c.to];
@@ -1116,6 +1275,7 @@
     this._gridLive = true;
     for (const p of this.projectiles) {
       if (!p.active) continue;
+      if (p.kind) this._guide(p, dt);
       p.x += p.vx * dt; p.y += p.vy * dt;
       p.ttl -= dt;
       let boom = p.ttl <= 0;
@@ -1124,7 +1284,7 @@
           if (boom) return;
           const u = this.units[id];
           if (u.state !== ALIVE || u.id === p.owner) return;
-          if (u.team === p.team && !this.T.friendlyFire) return;
+          if (u.team === p.team && !this.T.friendlyFire && !p.ff) return; // missiles/rockets/torpedoes hit allies too
           if (Math.hypot(u.x - p.x, u.y - p.y) < this.T.unitRadius * CLASSES[u.cls].size + 4) boom = true;
         });
       }
@@ -1204,9 +1364,10 @@
       u.guns[0] === u ? 0 : u.guns.map(gunSnap),
       r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
       LANES.indexOf(u.lane), r3(u.activeLeft),
+      u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd),
     ]);
     const proj = [];
-    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
+    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0, p.kind]);
     return {
       tick: this.tick, held: this.held.slice(), aim: this.aim.map(r3), human: this.human.slice(),
       units: units, proj: proj, ids: viewer ? list.map(u => u.id) : undefined, count: this.units.length,
@@ -1245,13 +1406,15 @@
       u.charging = a[19] ? snap.tick : -10;
       if (a[20] !== undefined && a[20] >= 0) u.lane = LANES[a[20]];
       if (a[21] !== undefined) u.activeLeft = a[21];
+      u.ml = a[22] ? { lx: a[22][0], ly: a[22][1], grade: a[22][2], target: a[22][3] } : null;
+      u.launchCd = a[23] || 0;
       u.hidden = false;
     });
     while (this.projectiles.length < snap.proj.length && this._growPool(1024)) { /* grow to fit */ }
     let k = 0;
     for (const p of this.projectiles) {
       const a = snap.proj[k];
-      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; k++; }
+      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; p.kind = a[5] | 0; k++; }
       else p.active = false;
     }
     this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));
