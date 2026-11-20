@@ -1367,7 +1367,9 @@
       u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd),
     ]);
     const proj = [];
-    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0, p.kind]);
+    // [.., kind, team, dormant]: dormant = a torpedo still running dumb (enemies can't see it yet)
+    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0, p.kind, p.team,
+      p.kind === 3 && p.arm > 0 && p.target < 0 ? 1 : 0]);
     return {
       tick: this.tick, held: this.held.slice(), aim: this.aim.map(r3), human: this.human.slice(),
       units: units, proj: proj, ids: viewer ? list.map(u => u.id) : undefined, count: this.units.length,
@@ -1414,7 +1416,7 @@
     let k = 0;
     for (const p of this.projectiles) {
       const a = snap.proj[k];
-      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; p.kind = a[5] | 0; k++; }
+      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; p.kind = a[5] | 0; p.team = a[6] | 0; p.arm = a[7] ? 1 : 0; p.target = -1; k++; }
       else p.active = false;
     }
     this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));

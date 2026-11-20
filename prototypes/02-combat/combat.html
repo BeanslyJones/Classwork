@@ -1143,14 +1143,24 @@ function drawWorld() {
   // Launch mini-game: the lock icon bouncing in the cone, coloured by lock grade.
   const GRADE_COL = ['#ffffff', '#ff4a3c', '#ffd23c', '#4ade80'];
   for (const u of sim.units) {
-    if (!u.ml || u.state !== 'alive' || u.team !== MINE()) continue;
+    // Yours and the enemy's: seeing their reticle hunt you is your cue to dodge.
+    if (!u.ml || u.state !== 'alive' || u.hidden) continue;
+    const foe = u.team !== MINE();
     const c = Math.cos(u.heading), sn = Math.sin(u.heading);
     const ix = u.x + u.ml.lx * c - u.ml.ly * sn, iy = u.y + u.ml.lx * sn + u.ml.ly * c, col = GRADE_COL[u.ml.grade];
     const cls = CLASSES[u.cls];
     ctx.beginPath(); ctx.moveTo(u.x, u.y); // the cone it bounces in
     ctx.arc(u.x, u.y, cls.coneRange, u.heading - cls.coneHalf, u.heading + cls.coneHalf); ctx.closePath();
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke();
+    ctx.strokeStyle = foe ? 'rgba(255,110,90,0.3)' : 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke();
+    if (foe) ctx.setLineDash([4 / cam.scale, 3 / cam.scale]);
     const t = u.ml.target >= 0 ? sim.units[u.ml.target] : null;
+    if (t && t.state === 'alive' && foe && t.team === MINE()) { // you're being hunted
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+      ctx.save(); ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255,90,70,' + (0.6 + 0.4 * pulse) + ')'; ctx.font = 'bold ' + (16 / cam.scale) + 'px system-ui';
+      ctx.fillText('!', t.x - 4 / cam.scale, t.y - sim.T.unitRadius * CLASSES[t.cls].size - 18 / cam.scale);
+      ctx.restore();
+    }
     if (t && t.state === 'alive') {
       const rr = sim.T.unitRadius * CLASSES[t.cls].size + 10;
       ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2 / cam.scale; ctx.stroke();
@@ -1163,6 +1173,7 @@ function drawWorld() {
     ctx.moveTo(ix - r * 1.6, iy); ctx.lineTo(ix - r * 0.5, iy); ctx.moveTo(ix + r * 0.5, iy); ctx.lineTo(ix + r * 1.6, iy);
     ctx.moveTo(ix, iy - r * 1.6); ctx.lineTo(ix, iy - r * 0.5); ctx.moveTo(ix, iy + r * 0.5); ctx.lineTo(ix, iy + r * 1.6);
     ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // Lock lines (your ships, every gun): colour = entry quality, strength = current lock.
@@ -1242,6 +1253,10 @@ function drawWorld() {
   // Projectiles (torpedoes: big, slow, red-orange with a trail)
   for (const p of sim.projectiles) {
     if (!p.active) continue;
+    // Torpedoes run silent: the enemy can't see one until it goes active; yours show faint.
+    const dormant = p.kind === 3 && p.arm > 0 && p.target < 0;
+    if (dormant && p.team !== MINE()) continue;
+    ctx.globalAlpha = dormant ? 0.35 : 1;
     if (p.kind === 1 || p.kind === 2) { // missile: white dart + smoke; rocket: hot orange streak
       const sp = Math.hypot(p.vx, p.vy) || 1, L = p.kind === 1 ? 18 : 24;
       ctx.beginPath();
@@ -1261,6 +1276,7 @@ function drawWorld() {
       ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
     }
   }
+  ctx.globalAlpha = 1;
 
   // Detonation flashes (weak point knockouts are the big white ones)
   for (const f of flashes) {
