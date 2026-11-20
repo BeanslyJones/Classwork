@@ -210,9 +210,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   (that would be a perfect forecast); forecasts come later, blurred by gear.
 - **The weather is logged** (keyframes now; storm-collision events later). The
   log is the record; recomputing from the seed is only a cross-check.
-- Keep in mind for later: descent and the upper layers sample the same
-  weather (descent gusts = the wind along its path); altitude can be a simple
-  per-gas profile multiplied onto the 2D field, not a 3D sim.
+- **This weather only affects the lowest game layer.** The layers above it
+  are not affected, for now. (If that changes later: descent gusts could be
+  the wind along its path, and altitude a simple per-gas profile multiplied
+  onto the 2D field, not a 3D sim.)
 - Still needed from the v12 spec: the pair-event matrix (10 events, likely one
   per gas pair incl. same-gas) and whether gases have weight / pressure-driven
   wind.
