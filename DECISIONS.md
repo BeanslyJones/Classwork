@@ -184,3 +184,35 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 ## 21. Turn-based mode (planned)
 - Plan orders while paused, then the battle runs for one turn. Ships move
   speed x turn length; fire rate = turn length / cooldown.
+
+## 22. Weather architecture (zones first, effects later)
+- **Rad storms on the world map ARE 04's radiation fields**: same four types,
+  same wheel, drain, protection and crystallizing rules. Weather's main job is
+  to keep players apart on the open-world map; they gear up for the weather
+  they expect.
+- **Effects are OFF for now.** First get the zones looking and moving well as
+  they collide. Power drain and crystallizing come next; other weather effects
+  later.
+- **Top-down layers:** GLOBAL (the one stateful sim, publishes keyframes) →
+  REGIONAL (the interpolator: keyframes baked into a grid per region, blended
+  in time) → LOCAL (fine detail that may move a seam at most D units from the
+  map). This matches the v12 funnel: planet sim → hemisphere → window → client
+  upscale. Not bottom-up: that needs sims everywhere, depends on report order,
+  and lets a few players change the planet.
+- **Deterministic with randomness:** only the global agent owns a stateful RNG;
+  regional/local detail uses a stateless hash of (seed, place, time); sampling
+  maths uses only + - * / sqrt floor and integer hashing (bit-identical on
+  every machine). Every message carries a version; consumers reject others.
+- **On the bus:** `wx.global.kf` (one keyframe of the whole sky, ~1.6 KB,
+  published 2 keyframes ahead) and `wx.kf.get` (request/reply to fetch a missed
+  keyframe). Consumers store keyframes by number, never guess a missing one,
+  and fetch gaps from the log. Clients must never get far-future keyframes
+  (that would be a perfect forecast); forecasts come later, blurred by gear.
+- **The weather is logged** (keyframes now; storm-collision events later). The
+  log is the record; recomputing from the seed is only a cross-check.
+- Keep in mind for later: descent and the upper layers sample the same
+  weather (descent gusts = the wind along its path); altitude can be a simple
+  per-gas profile multiplied onto the 2D field, not a 3D sim.
+- Still needed from the v12 spec: the pair-event matrix (10 events, likely one
+  per gas pair incl. same-gas) and whether gases have weight / pressure-driven
+  wind.

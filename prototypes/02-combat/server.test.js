@@ -2,7 +2,7 @@
 'use strict';
 const http = require('http');
 const { createServer } = require('./server.js');
-const { createBus, matches } = require('./bus.js');
+const { createBus, matches } = require('../shared/bus.js');
 
 let failures = 0;
 function assert(cond, label) {
@@ -145,6 +145,12 @@ function get(port, path) {
   const off = bus.subscribe('cmd.*', (m, s) => got.push(s + ':' + m.n));
   bus.publish('cmd.0', { n: 1 }); bus.publish('ctl', { n: 2 }); off(); bus.publish('cmd.1', { n: 3 });
   assert(got.join() === 'cmd.0:1', 'subscribers get only matching subjects, and unsubscribe works');
+  bus.subscribe('echo', (m, subj, replyTo) => { if (replyTo) bus.publish(replyTo, { n: m.n * 2 }); });
+  const reply = await bus.request('echo', { n: 21 });
+  assert(reply.n === 42, 'request/reply: the responder answers on a private inbox');
+  let timedOut = false;
+  try { await bus.request('nobody.home', {}, 50); } catch (e) { timedOut = true; }
+  assert(timedOut && bus.subscriptions === 1, 'a request with no responder times out and cleans up its inbox');
 
   // --- Interest filtering: each seat receives only ships near its own. ---
   console.log('\n[interest filtering]');

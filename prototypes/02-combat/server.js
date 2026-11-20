@@ -21,7 +21,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { Sim, TUNABLES, SONGS } = require('./sim.js');
-const { createBus } = require('./bus.js');
+const { createBus } = require('../shared/bus.js');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const SNAP_HZ = 30;

@@ -1,20 +1,17 @@
-// RADIANT WARFRONT — prototype 08 (core skeleton): the weather director.
-// What the brief pins down, built and verifiable headless:
-//   - four immiscible gases, planet always fully partitioned
+// WEATHER — GLOBAL layer: the one stateful weather sim (was 08's skeleton).
+//   - four immiscible gases (the same four radiation types as 04's fields),
+//     planet always fully partitioned
 //   - self-cohesion per gas is STRUCTURAL (without it: soup by ~tick 1200);
 //     Bloom's cohesion deliberately weak
-//   - deterministic seeded sim: same seed = same sky, everywhere
-//   - a director, not a renderer: output is FRONTS as parameter sets
-//   - vector-native: gas parcels (moving weighted points), no grid state
-//
-// ⚠ SKELETON, not v12. The four-layer funnel (planet → hemisphere vectors →
-// window primitives → client upscale) and the TEN NAMED PAIR-EVENTS need the
-// real v12 spec — the PAIR_EVENTS table below is a placeholder hook, mapping
-// NOT invented here. Domain is a torus standing in for the sphere.
+//   - deterministic seeded sim: same seed = same sky
+//   - publishes KEYFRAMES (plain data) — never pixels, never effects
+// Only the global agent runs this; everyone else reads its logged keyframes.
+// ⚠ The ten named pair-events and pressure/weight wind need the v12 spec.
+// Domain is a torus standing in for the sphere.
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.WeatherSim = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./rng.js'), require('./field.js'));
+  else (root.Wx = root.Wx || {}).global = factory(root.Wx.rng, root.Wx.field);
+})(typeof self !== 'undefined' ? self : this, function (rng, field) {
   'use strict';
 
   const TUNABLES = {
@@ -53,16 +50,6 @@
     { name: 'Pollen Storm', pair: null, condition: 'TODO (v12 spec)' },
   ];
 
-  function mulberry32(seed) {
-    let a = seed >>> 0;
-    return function () {
-      a |= 0; a = (a + 0x6D2B79F5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
   function Sim(seed, overrides) {
     this.seed = seed >>> 0;
     this.T = {};
@@ -71,7 +58,7 @@
       if (!(k in this.T)) throw new Error('unknown tunable: ' + k);
       this.T[k] = overrides[k];
     }
-    this.rng = mulberry32(this.seed);
+    this.rng = rng.mulberry32(this.seed); // the ONLY stateful weather RNG
     this.tick = 0;
     this.dt = 1 / this.T.tickRate;
     const S = this.T.worldSize;
@@ -102,16 +89,27 @@
     return d;
   };
 
-  // Ownership: strongest strength/(dist^2+eps) wins. Every point always has an
-  // owner — the planet is fully partitioned by construction.
+  // Ownership: summed influence per gas (field.js's kernel — ONE definition
+  // of "who owns this point", shared by the sim, the map and the battlefield).
+  // Every point always has an owner: the planet is fully partitioned.
   Sim.prototype.gasAt = function (x, y) {
-    let best = -1, bestW = -1;
+    const S = this.T.worldSize, w = this._w || (this._w = [0, 0, 0, 0]);
+    w[0] = w[1] = w[2] = w[3] = 0;
     for (const p of this.parcels) {
-      const dx = this._d(p.x, x), dy = this._d(p.y, y);
-      const w = p.strength / (dx * dx + dy * dy + 400);
-      if (w > bestW) { bestW = w; best = p.gas; }
+      const dx = field.wrapD(p.x - x, S), dy = field.wrapD(p.y - y, S);
+      w[p.gas] += p.strength / (dx * dx + dy * dy + field.KC);
     }
-    return best;
+    return field.argmax4(w);
+  };
+
+  // Keyframe: the whole sky as plain data for the bus and the log. Values
+  // are rounded so the message stays small (~2 KB); everyone downstream uses
+  // the rounded copy, so they all agree exactly.
+  const q = (v, k) => Math.round(v * k) / k;
+  Sim.prototype.keyframe = function () {
+    const p = [];
+    for (const c of this.parcels) p.push(c.gas, q(c.x, 100), q(c.y, 100), q(c.vx, 100), q(c.vy, 100), q(c.strength, 1000));
+    return { v: field.VERSION, seed: this.seed, tick: this.tick, size: this.T.worldSize, p: p };
   };
 
   Sim.prototype.step = function () {
@@ -234,5 +232,5 @@
     return (h >>> 0).toString(16);
   };
 
-  return { Sim: Sim, TUNABLES: TUNABLES, GASES: GASES, PAIR_EVENTS: PAIR_EVENTS, mulberry32: mulberry32 };
+  return { Sim: Sim, TUNABLES: TUNABLES, GASES: GASES, PAIR_EVENTS: PAIR_EVENTS };
 });

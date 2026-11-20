@@ -16,7 +16,7 @@ semantic commands only) + `test.js` (run `node test.js`) + a playable page
 | 5 extraction | `prototypes/05-extraction` | extraction a gamble? | built · gate proxy passes |
 | 6 descent | `prototypes/06-descent` | descent skill tightens scatter? | built · gate proxy passes |
 | 7 art | — | — | **blocked on sprites** (Inspector slots, hitbox overlay = Unity-side) |
-| 8 weather | `prototypes/08-weather` | fronts survive; seed-stable | **skeleton only — needs v12 spec** for funnel + 10 pair-events |
+| 8 weather | `prototypes/08-weather` + `prototypes/shared/wx` | fronts survive; seed-stable; zones look right colliding | global → regional → local layers on the bus, logged keyframes · effects off · **needs v12 spec** for 10 pair-events |
 | 9 command | `prototypes/09-command` | commanding still juggling? | built · order-TTL model is provisional |
 
 Gate proxies are headless bots; the feel gates still need hands on the sticks.

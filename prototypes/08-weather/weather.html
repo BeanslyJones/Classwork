@@ -3,29 +3,36 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Radiant Warfront — 08 Weather</title>
+<title>Radiation Weather</title>
 <style>
+  :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; background: #0b0e14; color: #cdd6e4; font: 13px/1.4 system-ui, sans-serif; overflow: hidden;
                touch-action: none; -webkit-user-select: none; user-select: none; }
   #wrap { display: flex; height: 100%; position: relative; }
-  #stage { flex: 1; position: relative; }
-  canvas { display: block; width: 100%; height: 100%; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  canvas#cv { display: block; width: 100%; height: 100%; cursor: grab; }
   #panelToggle { display: none; position: absolute; top: 10px; right: 10px; z-index: 10; font-size: 18px; padding: 6px 12px; }
-  @media (max-width: 700px) {
+  @media (max-width: 760px) {
     #panelToggle { display: block; }
-    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9;
-             transform: translateX(100%); transition: transform .2s; }
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 9; transform: translateX(100%); transition: transform .2s; }
     #panel.open { transform: none; }
   }
-  #panel { width: 270px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; }
+  #panel { width: 280px; background: #10141d; border-left: 1px solid #232a38; padding: 12px; overflow-y: auto; box-sizing: border-box; }
   #panel h1 { font-size: 13px; margin: 0 0 4px; color: #8fa3c8; letter-spacing: 1px; }
-  #panel .hint { color: #5b6880; font-size: 11px; margin-bottom: 10px; }
+  #panel h2 { font-size: 11px; margin: 14px 0 6px; color: #8fa3c8; letter-spacing: 1px; font-weight: 600; }
+  #panel .hint { color: #6f7d96; font-size: 11px; margin-bottom: 10px; }
   .tun { margin-bottom: 8px; }
   .tun label { display: flex; justify-content: space-between; cursor: help; }
   .tun label span.val { color: #8fa3c8; }
   .tun input { width: 100%; }
-  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; font-size: 12px; }
-  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; margin-right: 6px; cursor: pointer; }
+  .seg { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+  .seg button.on { background: #3a4a6a; border-color: #9fd0ff; color: #fff; }
+  #hud { position: absolute; top: 10px; left: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; font-size: 12px; line-height: 1.5; }
+  #hud b { font-size: 15px; }
+  #legend { position: absolute; bottom: 10px; left: 10px; display: flex; gap: 10px; font-size: 12px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  button { background: #1b2434; color: #cdd6e4; border: 1px solid #2e3a52; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
+  label.chk { display: flex; align-items: center; gap: 6px; margin: 4px 0; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -33,116 +40,350 @@
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="hud"></div>
+    <div id="legend"></div>
     <button id="panelToggle">⚙</button>
   </div>
   <div id="panel">
-    <h1>08 · WEATHER (skeleton)</h1>
+    <h1>RADIATION WEATHER</h1>
     <div class="hint">
-      Four immiscible gases partitioning the whole sky. Cohesion is structural —
-      drag it to 0 and watch the soup form. Bloom (pink) is deliberately the weak
-      gas. The sim is a director: the HUD lists live pair-fronts as parameter sets.
-      Same seed = same sky, always.
+      The four radiation types drifting as zones. Where two different zones meet,
+      the seam glows hot when they push into each other and tears dark where they
+      pull apart. No effects on ships yet; this is only the look and the motion.
+      Drag to pan, scroll or pinch to zoom.
     </div>
-    <div><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button></div>
-    <div style="margin:10px 0 4px;color:#8fa3c8">TUNABLES</div>
+    <div class="seg"><button id="btnRestart">Restart (R)</button><button id="btnSeed">New seed (N)</button><button id="btnPause">Pause (P)</button></div>
+
+    <h2>LAYER SHOWN</h2>
+    <div class="seg" id="layerSeg">
+      <button data-layer="local" class="on">Local</button>
+      <button data-layer="regional">Regional</button>
+      <button data-layer="global">Global (map)</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="chkMap" checked> World map inset</label>
+    <label class="chk"><input type="checkbox" id="chkRegions"> Region grid</label>
+    <label class="chk"><input type="checkbox" id="chkParcels"> Gas parcels</label>
+
+    <h2>LOOK</h2>
+    <div id="viewTun"></div>
+
+    <h2>BUS TEST</h2>
+    <div id="busTun"></div>
+
+    <h2>GLOBAL SKY (* = restart)</h2>
     <div id="tunables"></div>
   </div>
 </div>
-<script src="sim.js"></script>
+<script src="../shared/bus.js"></script>
+<script src="../shared/wx/rng.js"></script>
+<script src="../shared/wx/field.js"></script>
+<script src="../shared/wx/global.js"></script>
+<script src="../shared/wx/agents.js"></script>
 <script>
 'use strict';
-const { Sim, TUNABLES, GASES } = WeatherSim;
-const COL = { cinder: [255, 122, 69], bloom: [226, 103, 216], brine: [63, 201, 160], halo: [232, 210, 122] };
+const { createBus } = Bus;
+const { TUNABLES, GASES } = Wx.global;
+const { startGlobalAgent, startKeyframeLog, createWeatherClient } = Wx.agents;
+const COL = [[255, 122, 69], [226, 103, 216], [63, 201, 160], [232, 210, 122]]; // cinder, bloom, brine, halo
 
-let seed = 88;
-let overrides = {};
-let sim = new Sim(seed, overrides);
+// ---- Settings ---------------------------------------------------------------
+const VIEW = {
+  timeScale:  { value: 2,   min: 0,   max: 20,  step: 0.5,  tip: 'How fast the sky moves (1 = real time: 10 weather ticks a second).' },
+  D:          { value: 24,  min: 0,   max: 60,  step: 1,    tip: 'Local detail: how far (units) the close-up view may bend a seam away from where the map shows it.' },
+  warpScale:  { value: 70,  min: 20,  max: 200, step: 5,    tip: 'Size of the local swirls (units).' },
+  seamWidth:  { value: 0.16, min: 0.04, max: 0.4, step: 0.01, tip: 'How wide the glowing band at a seam is.' },
+  pScale:     { value: 8,   min: 2,   max: 30,  step: 1,    tip: 'Pressure that counts as a full push. Lower = seams glow more easily.' },
+  sparks:     { value: 1,   min: 0,   max: 3,   step: 0.1,  tip: 'Sparks thrown off where zones push hard into each other.' },
+  pixel:      { value: 3,   min: 2,   max: 8,   step: 1,    tip: 'Screen pixels per sample. Higher = faster, blurrier.' },
+};
+const BUSV = {
+  loss:       { value: 0,   min: 0,   max: 0.8, step: 0.05, tip: 'Drop this share of keyframe deliveries to the viewer. It should fetch the gaps from the log and look exactly the same.' },
+};
+const view = {}, busv = {};
+for (const k in VIEW) view[k] = VIEW[k].value;
+for (const k in BUSV) busv[k] = BUSV[k].value;
+let layer = 'local';
+let seed = 88, overrides = {}, paused = false;
 
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
-const hud = document.getElementById('hud');
-
-const STRUCTURAL = new Set(['worldSize', 'parcelsPerGas', 'tickRate']);
-const tunDiv = document.getElementById('tunables');
-for (const key in TUNABLES) {
-  const t = TUNABLES[key];
+function slider(parent, key, t, get, set, label) {
   const row = document.createElement('div');
   row.className = 'tun';
-  const step = (t.max - t.min) > 20 ? 1 : 0.005;
-  row.innerHTML = '<label title="' + t.tooltip + '">' + key + (STRUCTURAL.has(key) ? ' *' : '') +
-    '<span class="val" id="v_' + key + '">' + t.value + '</span></label>' +
-    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + step + '" value="' + t.value + '" id="s_' + key + '">';
-  tunDiv.appendChild(row);
-  row.querySelector('input').addEventListener('input', e => {
-    const v = parseFloat(e.target.value);
-    overrides[key] = v;
-    document.getElementById('v_' + key).textContent = v;
-    if (!STRUCTURAL.has(key)) sim.T[key] = v;
-  });
+  row.innerHTML = '<label title="' + t.tip + '">' + (label || key) + '<span class="val"></span></label>' +
+    '<input type="range" min="' + t.min + '" max="' + t.max + '" step="' + t.step + '" value="' + get() + '">';
+  const val = row.querySelector('.val'), inp = row.querySelector('input');
+  val.textContent = get();
+  inp.addEventListener('input', () => { set(parseFloat(inp.value)); val.textContent = inp.value; });
+  parent.appendChild(row);
 }
+for (const k in VIEW) slider(document.getElementById('viewTun'), k, VIEW[k], () => view[k], v => {
+  view[k] = v;
+  if (k === 'D' || k === 'warpScale') { client.opts.D = view.D; client.opts.warpScale = view.warpScale; }
+});
+for (const k in BUSV) slider(document.getElementById('busTun'), k, BUSV[k], () => busv[k], v => { busv[k] = v; }, 'packet loss');
+const STRUCTURAL = new Set(['worldSize', 'parcelsPerGas', 'tickRate']);
+for (const key in TUNABLES) {
+  const t = TUNABLES[key];
+  const step = (t.max - t.min) > 20 ? 1 : 0.005;
+  slider(document.getElementById('tunables'), key, { min: t.min, max: t.max, step: step, tip: t.tooltip },
+    () => (key in overrides ? overrides[key] : t.value),
+    v => { overrides[key] = v; if (!STRUCTURAL.has(key)) agent.sim.T[key] = v; }, key + (STRUCTURAL.has(key) ? ' *' : ''));
+}
+document.getElementById('legend').innerHTML = GASES.map((g, i) => '<span><i style="background:rgb(' + COL[i] + ')"></i>' + g + '</span>').join('');
+
+// ---- The weather services, wired through a bus exactly as on a server --------
+let bus, agent, wlog, client, worldT;
 function restart(newSeed) {
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-  sim = new Sim(seed, overrides);
+  bus = createBus();
+  wlog = startKeyframeLog(bus);
+  client = createWeatherClient(bus, { D: view.D, warpScale: view.warpScale, drop: () => Math.random() < busv.loss });
+  agent = startGlobalAgent(bus, { seed: seed, overrides: overrides, kfEvery: 5, lead: 2, countBytes: true });
+  worldT = 0;
+  sparks.length = 0;
+  mapDirty = true;
 }
 document.getElementById('btnRestart').addEventListener('click', () => restart(false));
 document.getElementById('btnSeed').addEventListener('click', () => restart(true));
+const pauseBtn = document.getElementById('btnPause');
+function togglePause() { paused = !paused; pauseBtn.textContent = paused ? 'Play (P)' : 'Pause (P)'; }
+pauseBtn.addEventListener('click', togglePause);
 document.getElementById('panelToggle').addEventListener('click', () => document.getElementById('panel').classList.toggle('open'));
+for (const b of document.querySelectorAll('#layerSeg button')) b.addEventListener('click', () => {
+  layer = b.dataset.layer;
+  for (const o of document.querySelectorAll('#layerSeg button')) o.classList.toggle('on', o === b);
+});
 window.addEventListener('keydown', e => {
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
+  if (e.key === 'p' || e.key === 'P' || e.key === ' ') togglePause();
 });
 
-// Ownership layer at coarse res, upscaled by the client — mirroring the funnel:
-// the director never paints pixels for you.
-const RES = 72;
-const zoneCv = document.createElement('canvas');
-zoneCv.width = RES; zoneCv.height = RES;
-const zctx = zoneCv.getContext('2d');
-
-let acc = 0, last = performance.now();
-function frame(now) {
-  const dtReal = Math.min(0.2, (now - last) / 1000);
-  last = now;
-  acc += dtReal;
-  const stepLen = 1 / sim.T.tickRate;
-  let stepped = 0;
-  while (acc >= stepLen && stepped < 8) { sim.step(); acc -= stepLen; stepped++; }
-
-  const S = sim.T.worldSize;
-  const img = zctx.createImageData(RES, RES);
-  const d = img.data;
-  for (let gy = 0; gy < RES; gy++) for (let gx = 0; gx < RES; gx++) {
-    const g = sim.gasAt((gx + 0.5) * S / RES, (gy + 0.5) * S / RES);
-    const c = COL[GASES[g]];
-    const i = (gy * RES + gx) * 4;
-    d[i] = c[0] * 0.55; d[i + 1] = c[1] * 0.55; d[i + 2] = c[2] * 0.55; d[i + 3] = 255;
+// ---- Camera: pan + zoom over the wrapping world -----------------------------
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const cam = { x: 500, y: 500, upp: 0 }; // world units per CSS pixel (0 = fit on first frame)
+let fitUpp = 1;
+const pointers = new Map();
+let pinch0 = null;
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); cv.style.cursor = 'grabbing'; });
+cv.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  if (pointers.size === 1) { cam.x -= (e.clientX - p.x) * cam.upp; cam.y -= (e.clientY - p.y) * cam.upp; }
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch0) zoomBy(pinch0 / d);
+    pinch0 = d;
   }
-  zctx.putImageData(img, 0, 0);
+});
+const endPtr = e => { pointers.delete(e.pointerId); pinch0 = null; cv.style.cursor = 'grab'; };
+cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', endPtr);
+cv.addEventListener('wheel', e => { e.preventDefault(); zoomBy(Math.exp(e.deltaY * 0.0015)); }, { passive: false });
+function zoomBy(f) { cam.upp = Math.min(3, Math.max(0.08, cam.upp * f)); }
 
-  const W = cv.clientWidth, H = cv.clientHeight;
-  const dpr = window.devicePixelRatio || 1;
-  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const side = Math.min(W, H);
-  const ox = (W - side) / 2, oy = (H - side) / 2;
-  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, W, H);
+// ---- Rendering --------------------------------------------------------------
+const low = document.createElement('canvas'), lctx = low.getContext('2d');
+let img = null;
+const out = new Float64Array(12), wv = [0, 0];
+const sparks = [];
+let cand = [], candN = 0;
+const W8 = 4; // warp lattice: one warp per W8 x W8 samples, blended between (it's smooth anyway)
+let warpX = new Float32Array(0), warpY = new Float32Array(0);
+
+let seamW = 0.16; // seam band width this frame (kept the same on screen at any zoom)
+function shade(d, i, o, nudge) {
+  const c = COL[o[0]], m = o[2];
+  const e = m < seamW ? 1 - m / seamW : 0;                      // 1 on the seam, 0 inside
+  const k = 0.30 + 0.24 * Math.min(1, m * 2.4) + 0.07 * nudge;  // zone body: deeper = brighter
+  const pn = o[4] / view.pScale;
+  const heat = e * e * e * (pn > 0 ? (pn > 1 ? 1 : pn) : 0);
+  const tear = e * e * (pn < 0 ? (pn < -1 ? 1 : -pn) : 0);
+  // Seam colour: every gas blended by its share, so it never jumps when the
+  // second-strongest gas changes.
+  const s0 = o[8], s1 = o[9], s2 = o[10], s3 = o[11];
+  const mr = s0 * COL[0][0] + s1 * COL[1][0] + s2 * COL[2][0] + s3 * COL[3][0];
+  const mg = s0 * COL[0][1] + s1 * COL[1][1] + s2 * COL[2][1] + s3 * COL[3][1];
+  const mb = s0 * COL[0][2] + s1 * COL[1][2] + s2 * COL[2][2] + s3 * COL[3][2];
+  const mixw = e * e * 0.75, dark = 1 - 0.6 * tear, hot = 0.75 + 0.6 * heat;
+  let r = (c[0] * k * (1 - mixw) + mr * mixw * hot) * dark + 120 * heat;
+  let gg = (c[1] * k * (1 - mixw) + mg * mixw * hot) * dark + 110 * heat;
+  let b = (c[2] * k * (1 - mixw) + mb * mixw * hot) * dark + 95 * heat;
+  d[i] = r > 255 ? 255 : r; d[i + 1] = gg > 255 ? 255 : gg; d[i + 2] = b > 255 ? 255 : b; d[i + 3] = 255;
+  return heat;
+}
+
+function renderSky(W, H) {
+  const px = view.pixel, bw = Math.ceil(W / px), bh = Math.ceil(H / px);
+  if (low.width !== bw || low.height !== bh) { low.width = bw; low.height = bh; img = lctx.createImageData(bw, bh); }
+  const d = img.data, upp = cam.upp * px, x0 = cam.x - bw / 2 * upp, y0 = cam.y - bh / 2 * upp;
+  // Warp lattice for the local layer (visual shortcut; gameplay samples exactly).
+  const lw = Math.ceil(bw / W8) + 2, lh = Math.ceil(bh / W8) + 2;
+  if (layer === 'local') {
+    if (warpX.length < lw * lh) { warpX = new Float32Array(lw * lh); warpY = new Float32Array(lw * lh); }
+    for (let j = 0; j < lh; j++) for (let i = 0; i < lw; i++) {
+      client.warpAt(x0 + i * W8 * upp, y0 + j * W8 * upp, wv);
+      warpX[j * lw + i] = wv[0]; warpY[j * lw + i] = wv[1];
+    }
+  }
+  candN = 0;
+  seamW = view.seamWidth * Math.pow(Math.min(1, cam.upp / fitUpp), 0.75);
+  const Dn = client.opts.D > 0 ? client.opts.D * 0.7071 : 1;
+  for (let y = 0; y < bh; y++) {
+    const wy = y0 + y * upp;
+    for (let x = 0; x < bw; x++) {
+      const wx = x0 + x * upp, i = (y * bw + x) * 4;
+      if (layer === 'global') {
+        const g = client.gasGlobal(wx, wy), c = COL[g];
+        d[i] = c[0] * 0.5; d[i + 1] = c[1] * 0.5; d[i + 2] = c[2] * 0.5; d[i + 3] = 255;
+        continue;
+      }
+      let sx = wx, sy = wy, nudge = 0;
+      if (layer === 'local') {
+        const fx = x / W8, fy = y / W8, ix = fx | 0, iy = fy | 0, tx = fx - ix, ty = fy - iy, o = iy * lw + ix;
+        const dx = (warpX[o] * (1 - tx) + warpX[o + 1] * tx) * (1 - ty) + (warpX[o + lw] * (1 - tx) + warpX[o + lw + 1] * tx) * ty;
+        const dy = (warpY[o] * (1 - tx) + warpY[o + 1] * tx) * (1 - ty) + (warpY[o + lw] * (1 - tx) + warpY[o + lw + 1] * tx) * ty;
+        sx += dx; sy += dy; nudge = dx / Dn;
+      }
+      client.sampleRegional(sx, sy, out);
+      const heat = shade(d, i, out, nudge);
+      if (heat > 0.25 && candN < 600 && Math.random() < 0.08) {
+        cand[candN++] = [wx, wy, out[5], out[6], heat, out[0], out[1]];
+      }
+    }
+  }
+  if (layer === 'global') { // the map has no glow: mark seams where neighbours differ
+    for (let y = 0; y < bh - 1; y++) for (let x = 0; x < bw - 1; x++) {
+      const i = (y * bw + x) * 4, r = i + 4, dn = i + bw * 4;
+      if (d[i] !== d[r] || d[i + 1] !== d[r + 1] || d[i] !== d[dn] || d[i + 1] !== d[dn + 1]) { d[i] = d[i + 1] = d[i + 2] = 235; }
+    }
+  }
+  lctx.putImageData(img, 0, 0);
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(zoneCv, ox, oy, side, side);
+  ctx.drawImage(low, 0, 0, bw * px, bh * px);
+}
 
-  for (const p of sim.parcels) {
-    const c = COL[GASES[p.gas]];
-    ctx.beginPath();
-    ctx.arc(ox + p.x / S * side, oy + p.y / S * side, 3, 0, 7);
-    ctx.fillStyle = 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
-    ctx.fill();
+function updateSparks(dt) {
+  // Same spark density in the world at any zoom.
+  const rate = view.sparks * candN * 0.5 * dt * 6 * Math.min(1, (cam.upp / fitUpp) * (cam.upp / fitUpp) * 4);
+  for (let k = 0; k < rate && sparks.length < 900; k++) {
+    const c = cand[(Math.random() * candN) | 0];
+    if (!c) break;
+    const a = Math.random() * 6.2832, s = 8 + 30 * c[4] * Math.random();
+    sparks.push({ x: c[0], y: c[1], vx: c[2] * 2 + Math.cos(a) * s, vy: c[3] * 2 + Math.sin(a) * s,
+                  life: 0, max: 0.35 + Math.random() * 0.7, col: Math.random() < 0.5 ? c[5] : c[6], h: c[4] });
   }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.life += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 1 - 1.5 * dt; s.vy *= 1 - 1.5 * dt;
+    if (s.life >= s.max) sparks.splice(i, 1);
+  }
+}
+function drawSparks(W, H) {
+  if (!sparks.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const sz = Math.max(1.2, Math.min(4, 2.4 / cam.upp));
+  for (const s of sparks) {
+    const sx = (s.x - cam.x) / cam.upp + W / 2, sy = (s.y - cam.y) / cam.upp + H / 2;
+    if (sx < -10 || sy < -10 || sx > W + 10 || sy > H + 10) continue;
+    const a = 1 - s.life / s.max, c = COL[s.col];
+    ctx.fillStyle = 'rgba(' + Math.min(255, c[0] + 90) + ',' + Math.min(255, c[1] + 90) + ',' + Math.min(255, c[2] + 90) + ',' + (a * 0.9).toFixed(3) + ')';
+    ctx.fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+  }
+  ctx.restore();
+}
 
-  const fronts = sim.fronts().slice(0, 4);
-  hud.innerHTML = '<div style="font-size:16px;font-weight:600">tick ' + sim.tick + ' · seed ' + seed + '</div>' +
-    fronts.map(f => f.pair.join('/') + ' front · length ' + f.length.toFixed(0) +
-      ' · ' + (f.intensity * 100).toFixed(1) + '% of sky').join('<br>');
+// World map inset: the global layer for the whole world, with the camera box.
+const mapCv = document.createElement('canvas'), MAPN = 72;
+mapCv.width = mapCv.height = MAPN;
+const mctx = mapCv.getContext('2d'), mimg = mctx.createImageData(MAPN, MAPN);
+let mapDirty = true, mapKf = -1;
+function drawMap(W, H) {
+  const S = client.layout.size;
+  if (mapDirty || client.cur.a !== mapKf) {
+    for (let y = 0; y < MAPN; y++) for (let x = 0; x < MAPN; x++) {
+      const c = COL[client.gasGlobal((x + 0.5) * S / MAPN, (y + 0.5) * S / MAPN)], i = (y * MAPN + x) * 4;
+      mimg.data[i] = c[0] * 0.6; mimg.data[i + 1] = c[1] * 0.6; mimg.data[i + 2] = c[2] * 0.6; mimg.data[i + 3] = 255;
+    }
+    mctx.putImageData(mimg, 0, 0);
+    mapDirty = false; mapKf = client.cur.a;
+  }
+  const side = Math.min(150, W * 0.3), mx = W - side - 12, my = H - side - 12;
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  ctx.drawImage(mapCv, mx, my, side, side);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#2e3a52'; ctx.lineWidth = 1; ctx.strokeRect(mx - 0.5, my - 0.5, side + 1, side + 1);
+  // camera box (wraps around the world)
+  const bwW = W * cam.upp, bhW = H * cam.upp;
+  const bx = ((cam.x - bwW / 2) % S + S) % S, by = ((cam.y - bhW / 2) % S + S) % S;
+  ctx.beginPath(); ctx.rect(mx, my, side, side); ctx.clip();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.2;
+  for (const ox of [0, -S]) for (const oy of [0, -S]) ctx.strokeRect(mx + (bx + ox) / S * side, my + (by + oy) / S * side, Math.min(S, bwW) / S * side, Math.min(S, bhW) / S * side);
+  ctx.restore();
+  ctx.fillStyle = '#8fa3c8'; ctx.font = '11px system-ui'; ctx.fillText('WORLD MAP (global)', mx, my - 5);
+}
+
+function drawOverlays(W, H) {
+  const S = client.layout.size, toScr = (x, y) => [(x - cam.x) / cam.upp + W / 2, (y - cam.y) / cam.upp + H / 2];
+  const x0 = cam.x - W / 2 * cam.upp, y0 = cam.y - H / 2 * cam.upp, x1 = cam.x + W / 2 * cam.upp, y1 = cam.y + H / 2 * cam.upp;
+  if (document.getElementById('chkRegions').checked) {
+    const rs = client.layout.regionSize;
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    for (let x = Math.floor(x0 / rs) * rs; x <= x1; x += rs) { const [sx] = toScr(x, 0); ctx.moveTo(sx, 0); ctx.lineTo(sx, H); }
+    for (let y = Math.floor(y0 / rs) * rs; y <= y1; y += rs) { const [, sy] = toScr(0, y); ctx.moveTo(0, sy); ctx.lineTo(W, sy); }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (document.getElementById('chkParcels').checked) {
+    client.parcels((g, px, py) => {
+      for (let ox = Math.floor(x0 / S) * S; ox <= x1; ox += S) for (let oy = Math.floor(y0 / S) * S; oy <= y1; oy += S) {
+        const [sx, sy] = toScr(px + ox, py + oy);
+        if (sx < -5 || sy < -5 || sx > W + 5 || sy > H + 5) continue;
+        ctx.beginPath(); ctx.arc(sx, sy, 3, 0, 7);
+        ctx.fillStyle = 'rgb(' + COL[g] + ')'; ctx.fill();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+      }
+    });
+  }
+}
+
+const hud = document.getElementById('hud');
+let last = performance.now(), renderMs = 0, frames = 0, hudT = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!cam.upp) cam.upp = 1000 / Math.min(W, H);
+  fitUpp = 1000 / Math.min(W, H);
+
+  if (!paused) worldT += dt * view.timeScale * agent.sim.T.tickRate;
+  agent.advanceTo(worldT);
+  const t0 = performance.now();
+  if (client.setTime(worldT)) {
+    renderSky(W, H);
+    if (!paused) updateSparks(dt);
+    drawSparks(W, H);
+    drawOverlays(W, H);
+    if (document.getElementById('chkMap').checked) drawMap(W, H);
+  } // else: keep the last picture while a missing keyframe is fetched from the log
+  renderMs = renderMs * 0.9 + (performance.now() - t0) * 0.1;
+
+  hudT += dt;
+  if (hudT > 0.2) {
+    hudT = 0;
+    const st = client.stats, K = agent.kfEvery;
+    hud.innerHTML = '<b>' + layer.toUpperCase() + ' view</b> · seed ' + seed + '<br>' +
+      'world tick ' + worldT.toFixed(1) + ' · keyframes ' + client.cur.a + '→' + client.cur.b + ' (' + (client.cur.alpha * 100).toFixed(0) + '%)<br>' +
+      'published ' + agent.published + ' · in log ' + wlog.log.size + ' · ~' + (agent.bytes / Math.max(1, agent.published)).toFixed(0) + ' B each · ' +
+      ((agent.bytes / Math.max(1, agent.published)) * (agent.sim.T.tickRate / K) * view.timeScale / 1024).toFixed(1) + ' KB/s<br>' +
+      'viewer got ' + st.received + ' · dropped ' + st.dropped + ' · fetched from log ' + st.fetched + '<br>' +
+      'baked ' + st.bakes + ' regions (' + (st.bakeMs / Math.max(1, st.bakes)).toFixed(2) + ' ms each) · draw ' + renderMs.toFixed(1) + ' ms · sparks ' + sparks.length;
+  }
   requestAnimationFrame(frame);
 }
+restart(false);
 requestAnimationFrame(frame);
 </script>
 </body>
