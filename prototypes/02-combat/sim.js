@@ -95,7 +95,7 @@
     torpedoTurn:     { value: 1.3,   min: 0.1, max: 5,    tooltip: 'How hard an active torpedo turns toward its target.' },
     torpedoReload:   { value: 4.0,   min: 0.5, max: 15,   tooltip: 'Seconds between torpedoes.' },
     lockIconSpeed:   { value: 150,   min: 20,  max: 500,  tooltip: 'Lock icon speed (units/s) on a yellow lock. Green is slower, red and white faster.' },
-    lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Let go with the icon within this distance of the target to lock it. Closer = better tracking.' },
+    lockCatch:       { value: 55,    min: 10,  max: 200,  tooltip: 'Lock is 100% with the icon anywhere on the target ship, falling to 0 this far beyond its edge.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -177,6 +177,11 @@
     if (kind === 'rocket') return { speed: T.rocketSpeed, turn: 0, ttl: 1.6, damage: T.rocketDamage, aoe: 24, reload: T.rocketReload, cost: 3, vsCapital: 1 };
     return { speed: T.torpedoSpeed, turn: T.torpedoTurn, ttl: 6, damage: 38.8, aoe: 30, reload: T.torpedoReload, cost: 6, vsCapital: 4.0,
              armDist: T.torpedoArmDist, search: T.torpedoSearch };
+  }
+  // Radius of a ship's drawn icon (screens draw some hulls bigger/smaller than their hit size).
+  function iconRadius(T, clsName) {
+    const k = clsName === 'bomber' || clsName === 'heavy' || clsName === 'torpedo' ? 1.3 : clsName === 'interceptor' ? 0.8 : 1;
+    return T.unitRadius * CLASSES[clsName].size * k;
   }
   const GRADE_SPEED = [1.7, 1.7, 1.0, 0.55]; // icon speed by lock grade: none, red, yellow, green
   const GRADE_LOCK = [0, 0.5, 0.8, 1];      // how much a caught lock is worth by grade
@@ -778,7 +783,11 @@
     const ix = u.x + m.lx * c - m.ly * sn, iy = u.y + m.lx * sn + m.ly * c;
     let lock = 0;
     const t = m.target >= 0 ? this.units[m.target] : null;
-    if (t && t.state === ALIVE) lock = Math.max(0, 1 - Math.hypot(t.x - ix, t.y - iy) / this.T.lockCatch) * GRADE_LOCK[m.grade];
+    // 100% anywhere on the target's icon; falls off from its edge out to lockCatch beyond it.
+    if (t && t.state === ALIVE) {
+      const edge = Math.max(0, Math.hypot(t.x - ix, t.y - iy) - iconRadius(this.T, t.cls));
+      lock = Math.max(0, 1 - edge / this.T.lockCatch) * GRADE_LOCK[m.grade];
+    }
     // Fly toward the icon (a perfectly caught lock flies at the target itself).
     const ax = lock > 0 ? t.x : ix, ay = lock > 0 ? t.y : iy;
     const angle = (Math.abs(ax - u.x) + Math.abs(ay - u.y) < 1) ? u.heading : Math.atan2(ay - u.y, ax - u.x);
@@ -1448,7 +1457,7 @@
     return (h >>> 0).toString(16);
   };
 
-  return { Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
+  return { iconRadius: iconRadius, Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
            SONGS: SONGS, LANES: LANES, DEFAULT_LANE: DEFAULT_LANE,
            mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
 });

@@ -327,7 +327,7 @@
 <script>
 'use strict';
 if (typeof CombatSim === 'undefined') window.__showErr('sim.js did not load (CombatSim missing)');
-const { Sim, TUNABLES, CLASSES, BUILDABLE, SONGS, LANES, mulberry32 } = CombatSim;
+const { Sim, TUNABLES, CLASSES, BUILDABLE, SONGS, LANES, mulberry32, iconRadius } = CombatSim;
 const LANE_COL = { kick: '#ff6a55', snare: '#ffb03c', hat: '#ffe36a', bass: '#b98cff', keys: '#5adcff', crash: '#ffffff' };
 const BUILD_KEYS = ['q', 'w', 'e', 'a', 's', 'd'];
 
@@ -1162,9 +1162,9 @@ function drawWorld() {
       ctx.restore();
     }
     if (t && t.state === 'alive') {
-      const rr = sim.T.unitRadius * CLASSES[t.cls].size + 10;
+      const rr = iconRadius(sim.T, t.cls); // solid ring = 100% zone (the whole ship), dashed = where the lock runs out
       ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.strokeStyle = col; ctx.lineWidth = 2 / cam.scale; ctx.stroke();
-      ctx.beginPath(); ctx.arc(t.x, t.y, sim.T.lockCatch, 0, 7); ctx.setLineDash([3 / cam.scale, 5 / cam.scale]);
+      ctx.beginPath(); ctx.arc(t.x, t.y, rr + sim.T.lockCatch, 0, 7); ctx.setLineDash([3 / cam.scale, 5 / cam.scale]);
       ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1 / cam.scale; ctx.stroke(); ctx.setLineDash([]);
     }
     const r = 10 / cam.scale;
