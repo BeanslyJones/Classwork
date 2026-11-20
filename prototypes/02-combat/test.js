@@ -168,29 +168,33 @@ function duel(roster, extra) {
   // Leading: against a crossing target, a full lock aims ahead of it, zero lock aims at it.
   {
     function shotAngle(lockQ) {
+      // A Grayzer side turret: hull pointing -y, so its +90 deg turret looks along +x.
       const s = duel([{ cls: 'capital', team: PLAYER }, { cls: 'fighter', team: ENEMY }], { lockSpreadMax: 0 });
       const [a, b] = s.units;
-      a.x = 0; a.y = 0; a.heading = Math.PI / 2; a.gunAngle = 0;
-      b.x = 200; b.y = 0; b.heading = Math.PI / 2; // crossing upward
+      a.x = 0; a.y = 0; a.heading = -Math.PI / 2;
+      const g = a.guns[0];
+      g.gunAngle = a.heading + g.mount;
+      b.x = 200; b.y = 0; b.heading = Math.PI / 2; // crossing across the turret's line of fire
       s.step(); // acquire
-      a.lockCap = 1; a.lockQ = lockQ; a.cooldown = 0; a.gunAngle = 0;
+      g.lockCap = 1; g.lockQ = lockQ; g.cooldown = 0;
       a.energy = CLASSES.capital.energyMax;
       for (let i = 0; i < 40; i++) {
-        if (lockQ === 0) { a.lockQ = 0; a.lockCap = 0; }
+        if (lockQ === 0) { g.lockQ = 0; g.lockCap = 0; }
         s.step();
-        for (const e of s.events) if (e.type === 'fired' && e.unit === a.id) return a.gunAngle;
+        for (const e of s.events) if (e.type === 'fired' && e.unit === a.id && e.gun === 0) return wrapA(g.gunAngle - (a.heading + g.mount));
       }
       return null;
     }
+    function wrapA(x) { while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) x += 2 * Math.PI; return x; }
     const zero = shotAngle(0), full = shotAngle(1);
-    assert(zero !== null && full !== null && full > zero + 0.05, 'full lock leads the target (' + (zero || 0).toFixed(3) + ' vs ' + (full || 0).toFixed(3) + ' rad)');
+    assert(zero !== null && full !== null && Math.abs(full - zero) > 0.05, 'full lock leads the target (' + (zero || 0).toFixed(3) + ' vs ' + (full || 0).toFixed(3) + ' rad off the turret line)');
   }
 }
 
 // --- 5d. Torpedo bomber: slow shots that wreck capitals. -----------------------
 {
   console.log('\n[torpedo bomber]');
-  assert(CLASSES.torpedo.projSpeed < Math.min(...Object.keys(CLASSES).filter(k => k !== 'torpedo').map(k => CLASSES[k].projSpeed)),
+  assert(CLASSES.torpedo.projSpeed < Math.min(...Object.keys(CLASSES).filter(k => k !== 'torpedo' && !CLASSES[k].noGuns).map(k => CLASSES[k].projSpeed)),
     'torpedo has the slowest shots in the fleet');
   function hit(targetCls) {
     const s = duel([{ cls: 'torpedo', team: PLAYER }, { cls: targetCls, team: ENEMY }]);
@@ -231,7 +235,7 @@ function duel(roster, extra) {
     return Infinity;
   }
   const small = ['fighter', 'interceptor', 'bomber', 'heavy', 'aaa', 'torpedo'];
-  const gunships = ['fighter', 'interceptor', 'bomber', 'heavy', 'aaa', 'capital'];
+  const gunships = ['fighter', 'interceptor', 'bomber', 'heavy', 'aaa']; // the Grayzer is support now: side turrets, slow fire
   let lo = Infinity, hi = 0;
   for (const a of gunships) for (const t of small) { const v = ttk(a, t); lo = Math.min(lo, v); hi = Math.max(hi, v); }
   assert(lo >= 1.5 && hi <= 4.5, 'small ships die in ~3s (range ' + lo.toFixed(1) + '-' + hi.toFixed(1) + 's)');
@@ -286,8 +290,9 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
     const T = TICK_RATE * 60, from = T - TICK_RATE * 30;
     for (let t = 0; t < T; t++) {
       if (grabEveryTicks && t % grabEveryTicks === 0) {
-        const u = mine[(t / grabEveryTicks) % mine.length];
-        if (u.state === 'alive') { s.command({ type: 'grab', unit: u.id }); s.command({ type: 'release' }); if (t >= from) playerActs++; }
+        const alive = mine.filter(v => v.state === 'alive');
+        const u = alive[(t / grabEveryTicks) % Math.max(1, alive.length)];
+        if (u) { s.command({ type: 'grab', unit: u.id }); s.command({ type: 'release' }); if (t >= from) playerActs++; }
       }
       s.step();
       if (t >= from && s.aiPick[ENEMY] >= 0) aiReaims++;
@@ -337,6 +342,7 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   assert(s.actions[PLAYER].length === apmBefore + 1, 'an order counts toward APM');
 }
 
+function wrapA2(x) { while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) x += 2 * Math.PI; return x; }
 // --- 5b. Only capitals have turrets. ----------------------------------------
 {
   console.log('\n[turrets: capitals only]');
@@ -348,11 +354,26 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   foe.x = 0; foe.y = 100; // abeam of both: off the fighter's nose, inside capital turret range
   let fighterGunOff = 0;
   for (let t = 0; t < 45; t++) {
+    foe.x = 0; foe.y = cap.y - 100; foe.vx = foe.vy = 0; // keep it abeam: off the fighter's nose, beside the Grayzer
     s.step();
     fighterGunOff = Math.max(fighterGunOff, Math.abs(f.gunAngle - f.heading));
   }
   assert(fighterGunOff === 0, 'fighter gun never leaves the hull heading (fixed forward guns)');
-  assert(Math.abs(cap.gunAngle - cap.heading) > 0.3, 'capital turret swings off the hull toward a target');
+  const tg = cap.guns.find(g => g.targetId === foe.id);
+  assert(tg && Math.abs(wrapA2(tg.gunAngle - cap.heading)) > 0.3, 'a Grayzer side turret tracks a target off the hull line');
+  assert(cap.guns.length === 2 && cap.guns.every(g => Math.abs(Math.abs(g.mount) - Math.PI / 2) < 1e-9 && Math.abs(g.traverse - Math.PI / 4) < 1e-9),
+    'Grayzer has two side turrets, each locked to a 90 deg sector');
+  // A target dead ahead is outside both side sectors.
+  {
+    const s3 = duel([{ cls: 'capital', team: PLAYER }, { cls: 'fighter', team: ENEMY }]);
+    const [c3, f3] = s3.units;
+    c3.x = 0; c3.y = 0; c3.heading = 0;
+    for (let t = 0; t < 30; t++) { f3.x = 200; f3.y = 0; f3.vx = f3.vy = 0; s3.step(); }
+    assert(c3.guns.every(g => g.targetId === -1), "nothing dead ahead: neither side turret can bear");
+    let maxOff = 0;
+    for (let t = 0; t < 60; t++) { f3.x = c3.x + 60; f3.y = c3.y + 300; s3.step(); for (const g of c3.guns) maxOff = Math.max(maxOff, Math.abs(wrapA2(g.gunAngle - (c3.heading + g.mount)))); }
+    assert(maxOff <= Math.PI / 4 + 1e-6, 'turrets never leave their 90 deg sector');
+  }
   for (const k in CLASSES) {
     assert(CLASSES[k].turret === (k === 'capital'), k + (k === 'capital' ? ' has a turret' : ' has no turret'));
   }
@@ -393,20 +414,100 @@ function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a 
   function traverse(bridgeOut) {
     const s2 = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'capital', team: ENEMY }]);
     const [f2, c2] = s2.units;
-    c2.x = 0; c2.y = 0; c2.heading = 0; c2.gunAngle = 0;
+    c2.x = 0; c2.y = 0; c2.heading = 0;
+    c2.guns[0].gunAngle = c2.heading + c2.guns[0].mount - c2.guns[0].traverse; // start at the far edge of its sector
     if (bridgeOut) for (const w of c2.weak) if (w.type === 'bridge') { w.hp = 0; w.out = true; }
-    let fired = 0;
-    for (let t = 0; t < 120; t++) { // 4s: a damaged turret needs ~1.3s to swing 90 deg
-      f2.x = 0; f2.y = 150; f2.vx = f2.vy = 0; // off the turret's right, in range
+    let fired = 0, first = -1;
+    for (let t = 0; t < 120; t++) { // 4s
+      f2.x = c2.x + 150 * Math.cos(Math.PI / 2 + 0.6); f2.y = c2.y + 150 * Math.sin(Math.PI / 2 + 0.6); f2.vx = f2.vy = 0; // other side of the sector: must swing ~1.4 rad
       s2.step();
       for (const e of s2.events) if (e.type === 'fired' && e.unit === c2.id) fired++;
+      if (first < 0 && s2._inCone(c2, f2, c2.guns[0])) first = t; // tick the barrel first bears on the target
     }
-    return { swung: Math.abs(c2.gunAngle), fired: fired, lockCap: c2.lockCap };
+    const g = c2.guns[0];
+    return { swung: Math.abs(wrapA2(g.gunAngle - (c2.heading + g.mount))), fired: fired, first: first, lockCap: g.lockCap };
   }
   const ok = traverse(false), hurt = traverse(true);
   assert(hurt.swung > 0.3 && hurt.fired > 0, 'bridge out -> turret still tracks and fires (' + hurt.fired + ' shots)');
-  assert(hurt.swung < ok.swung || hurt.fired < ok.fired, 'bridge out -> slower, weaker turret (' + hurt.fired + ' vs ' + ok.fired + ' shots)');
+  assert(hurt.first > ok.first, 'bridge out -> slower turret: on target at tick ' + hurt.first + ' vs ' + ok.first);
   assert(hurt.lockCap <= s.T.bridgeLockCap + 1e-9, 'bridge out -> lock capped at ' + s.T.bridgeLockCap);
+}
+
+// --- 5k. Grayzer battery recharges nearby friendly ships. ----------------------
+{
+  console.log('\n[Grayzer battery]');
+  const s = duel([{ cls: 'capital', team: PLAYER }, { cls: 'fighter', team: PLAYER }, { cls: 'fighter', team: PLAYER }]);
+  const [cap, near, far] = s.units;
+  cap.x = 0; cap.y = 0; near.energy = 40; far.energy = 40;
+  const b0 = cap.battery;
+  for (let t = 0; t < TICK_RATE * 2; t++) { near.x = 60; near.y = 0; far.x = 900; far.y = 0; s.step(); }
+  assert(near.energy > 40 + 25, 'a ship in range is recharged (' + near.energy.toFixed(0) + ')');
+  assert(Math.abs(far.energy - 40) < 1e-6, 'a ship out of range is not');
+  assert(cap.battery < b0, 'charging drains the battery (' + b0 + ' -> ' + cap.battery.toFixed(0) + ')');
+  near.energy = CLASSES.fighter.energyMax;
+  const bLow = cap.battery;
+  for (let t = 0; t < TICK_RATE * 2; t++) s.step();
+  assert(cap.battery > bLow, 'battery recharges when nobody needs it');
+}
+
+// --- 5l. Destroy the Carrier: money, building, salvage, victory. ---------------
+{
+  console.log('\n[Destroy the Carrier]');
+  const s = new Sim(SEED, {}, null, { mode: 'carrier' });
+  const carriers = s.units.filter(u => u.cls === 'carrier');
+  assert(carriers.length === 2 && s.units.filter(u => u.cls === 'capital').length === 2, 'one carrier and one Grayzer per side');
+  const m0 = s.money[PLAYER];
+  for (let t = 0; t < TICK_RATE; t++) s.step();
+  assert(Math.abs(s.money[PLAYER] - m0 - s.T.incomePerSec) < 0.5, 'earns incomePerSec while the carrier lives');
+  const n0 = s.units.length, mb = s.money[PLAYER];
+  s.command({ type: 'build', cls: 'fighter' });
+  s.command({ type: 'build', cls: 'capital' }); // never buildable
+  s.step();
+  assert(Math.abs(s.money[PLAYER] - (mb - CLASSES.fighter.cost) - s.T.incomePerSec / TICK_RATE) < 0.5 && s.queue[PLAYER].length === 1, 'build charges the cost and queues; a Grayzer cannot be built');
+  let built = null;
+  for (let t = 0; t < TICK_RATE * (CLASSES.fighter.buildTime + 1) && !built; t++) { s.step(); for (const e of s.events) if (e.type === 'built' && e.team === PLAYER) built = e; }
+  assert(built && s.units.length > n0 && s.units[built.unit].cls === 'fighter', 'carrier builds the ship after its build time');
+  const myCar = s.carrierOf(PLAYER), carStart = myCar.energy;
+  // carriers never stall even when ignored
+  for (let t = 0; t < TICK_RATE * 50; t++) s.step();
+  assert(myCar.state === 'alive' && myCar.momentum >= 0.99, 'an ignored carrier never stalls');
+  // salvage
+  s.wrecks.push({ x: 5000, y: 5000, value: 77, ttl: 30 });
+  const fighter = s._spawn('fighter', PLAYER, 0, 0, 0); // fresh ship: the test's others stalled while ignored
+  const mS = s.money[PLAYER];
+  fighter.x = 5000; fighter.y = 5000;
+  s.step();
+  assert(s.money[PLAYER] >= mS + 77, 'flying over a wreck salvages its value');
+  // AI side builds by itself
+  assert(s.units.some(u => u.team === ENEMY && u.id >= n0), 'AI carrier builds ships on its own');
+  // victory
+  const enemyCar = s.carrierOf(ENEMY);
+  s._damage(enemyCar, 1e9, 'test');
+  s.step();
+  assert(s.winner === PLAYER, 'destroying the enemy carrier wins');
+  // snapshot round-trip creates ships built after a client joined
+  const snap = JSON.parse(JSON.stringify(s.snapshot([])));
+  const c = new Sim(SEED, {}, null, { mode: 'carrier' });
+  c.applySnapshot(snap);
+  assert(c.units.length === s.units.length && c.units.every((u, i) => u.cls === s.units[i].cls && u.team === s.units[i].team), 'client snapshot creates mid-battle ships');
+  assert(c.money[PLAYER] === Math.floor(s.money[PLAYER]) && c.winner === PLAYER, 'snapshot carries money and winner');
+  const wrongMode = new Sim(SEED); // a client still on the skirmish roster
+  wrongMode.applySnapshot(snap);
+  assert(wrongMode.units.every((u, i) => u.cls === s.units[i].cls && u.team === s.units[i].team && u.id === i), 'snapshot repairs a client whose ships are out of step');
+}
+
+// --- 5m. Retarget cue: the next lock after a retarget is flagged. -------------
+{
+  console.log('\n[retarget]');
+  const s = duel([{ cls: 'fighter', team: PLAYER }, { cls: 'fighter', team: ENEMY }, { cls: 'fighter', team: ENEMY }]);
+  const [a, e1, e2] = s.units;
+  const pin = () => { a.x = 0; a.y = 0; a.heading = 0; e1.x = 120; e1.y = 10; e2.x = 120; e2.y = -10; };
+  pin(); s.step();
+  const first = a.targetId;
+  s.command({ type: 'refocus', unit: a.id });
+  let flagged = null;
+  for (let t = 0; t < 10 && !flagged; t++) { pin(); s.step(); for (const e of s.events) if (e.type === 'locked' && e.unit === a.id) flagged = e; }
+  assert(first >= 0 && flagged && flagged.retarget === true, 'a lock taken after a retarget is flagged for the cue');
 }
 
 // --- 6. Dodge: straight line, big energy cost, turn lockout after. ----------

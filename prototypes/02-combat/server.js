@@ -22,11 +22,13 @@ const SNAP_HZ = 30;
 const ROOT = __dirname;
 const STATIC = { '/combat.html': 'text/html; charset=utf-8', '/sim.js': 'text/javascript; charset=utf-8', '/sfx.js': 'text/javascript; charset=utf-8' };
 // Events screens need for effects and sound (everything else stays server-side).
-const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked']);
+const FORWARD = new Set(['detonation', 'weakDown', 'fired', 'crystallizing', 'dodge', 'locked', 'built', 'salvage', 'victory', 'refocus']);
+const MODES = ['skirmish', 'carrier'];
 
 function createServer() {
   let seed = (Math.random() * 0xFFFFFFFF) >>> 0;
   let overrides = {};
+  let mode = 'skirmish';
   let sim = null;
   let speed = 0.5, paused = false;
   const clients = new Map(); // id -> { res, seat }
@@ -34,7 +36,7 @@ function createServer() {
   let pendingEvents = [];
 
   function newSim() {
-    sim = new Sim(seed, overrides);
+    sim = new Sim(seed, overrides, null, { mode: mode });
     sim.human = [seats[0] !== null, seats[1] !== null];
     pendingEvents = [];
   }
@@ -43,7 +45,7 @@ function createServer() {
   function send(res, type, data) { res.write('event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); }
   function broadcast(type, data) { for (const c of clients.values()) send(c.res, type, data); }
   function lobby() {
-    return { seats: seats.map(s => s !== null), players: clients.size, speed: speed, paused: paused, seed: seed, overrides: overrides };
+    return { seats: seats.map(s => s !== null), players: clients.size, speed: speed, paused: paused, seed: seed, overrides: overrides, mode: mode };
   }
   function hello(c, id) { send(c.res, 'hello', Object.assign({ id: id, seat: c.seat }, lobby())); }
 
@@ -71,6 +73,10 @@ function createServer() {
         if (c.seat < 0) return; // spectators can't fly
         sim.command({ type: cmd.type, unit: Number.isInteger(cmd.unit) ? cmd.unit : undefined, angle: +cmd.angle, team: c.seat });
         return;
+      case 'build':
+        if (c.seat < 0 || typeof cmd.cls !== 'string') return;
+        sim.command({ type: 'build', cls: cmd.cls, team: c.seat });
+        return;
       case 'speed':
         if (+cmd.value >= 0.1 && +cmd.value <= 2) speed = +cmd.value;
         broadcast('lobby', lobby());
@@ -80,6 +86,7 @@ function createServer() {
         return;
       case 'restart':
         if (cmd.newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+        if (MODES.indexOf(cmd.mode) >= 0) mode = cmd.mode;
         newSim();
         for (const [id, oc] of clients) hello(oc, id);
         return;

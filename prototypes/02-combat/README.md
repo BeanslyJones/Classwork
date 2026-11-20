@@ -39,6 +39,32 @@ lock-on, order/select/UI blips. Stereo from screen position, distance falloff,
 a short reverb and a compressor; voices are budgeted so rapid fire stays clean.
 Volume/mute on the title screen, M toggles mute.
 
+## Destroy the Carrier, Grayzer, cones, retarget, tutorial
+
+- **Modes** (title screen): SKIRMISH (fixed 6v6), DESTROY THE CARRIER, TUTORIAL.
+- **Destroy the Carrier** (`mode: 'carrier'`): each side has a carrier (HIVE —
+  no guns, never stalls, 1600 hull, weak points incl. a hangar that halves
+  build speed), one Grayzer and a small starting wing. Money: `startMoney` 250,
+  `incomePerSec` 8 while your carrier lives, plus **salvage** — every dead ship
+  leaves a wreck worth `salvageFrac` (40%) of its cost that any ship can fly over
+  to collect (`wreckSec` 45s). Build from the bar at the bottom or Q W E A S D
+  (cost / build time per class in `CLASSES`; queue of 5; `maxShips` 16 per
+  side). Grayzers and carriers can't be built: one each. The AI builds a steady
+  mix. Lose your carrier, lose the game.
+- **Grayzer**: two side turrets, each confined to a 90° sector (±45° off
+  straight out), fire rate turned down (0.9s per turret). **Battery** (300,
+  +5/s): friendly ships within 200 recharge at 15/s each (cyan beam; cyan ring
+  shows the charge). `batteryScale` tunes it all.
+- **Cones** are drawn in entry-quality zones: green middle (can reach a full
+  lock), yellow, red edges (lowest lock ceiling). All of yours are shown; an
+  enemy's only when it is within `enemyConePx` screen pixels of one of your
+  ships (CAMERA panel).
+- **Retarget**: T (or F) / RETARGET button. Brackets snap onto any of your
+  ships' new targets; after a manual retarget the cue is bigger, labelled and
+  beeps.
+- **Tutorial**: 12 guided steps in a small battle; each waits for you to do
+  the move (select, order, drag, retarget, dodge, camera) and ends with a fight.
+
 ## LAN multiplayer
 
 1. On any computer on your Wi-Fi (Node.js installed, nothing else needed):

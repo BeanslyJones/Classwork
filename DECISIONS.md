@@ -142,3 +142,13 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Ship names: **GRAYZER** (capital dropship), **THE JACK** (fighter). Other
   names in the garage (NEEDLE, ANVIL, MANTA, BULWARK, HARPOON) are placeholders.
 - Title screen, garage with ship specs, and game sounds added.
+
+## 17. Grayzer, carrier mode, UI
+- Cones show green / yellow / red entry zones. All friendly cones visible; enemy
+  cones only within X pixels of your ships (slider).
+- Retarget hotkey (T, also F) with a visual and audio cue.
+- Tutorial added.
+- **Grayzer**: lower fire rate; **battery** that recharges friendly ships'
+  energy; **two turrets, one per side, each limited to a 90° sector**. One per team.
+- **Carrier** that manufactures ships; **Destroy the Carrier** game mode.
+- Money: per second, plus salvaging ship wrecks.

@@ -108,6 +108,16 @@ function get(port, path) {
   await wait(250);
   assert(srv.sim.human[1] === false, 'red goes back to the AI when nobody is left to fly it');
 
+  // Destroy the Carrier over LAN: switch mode, build a ship.
+  await post(port, a.hello.id, { type: 'restart', mode: 'carrier' });
+  await wait(250);
+  assert(srv.sim.mode === 'carrier' && a.lastSnap && a.lastSnap.mode === 'carrier', 'any player can switch the shared game to Destroy the Carrier');
+  const before = srv.sim.queue[0].length + srv.sim.units.length;
+  await post(port, a.hello.id, { type: 'build', cls: 'fighter' });
+  await wait(150);
+  assert(srv.sim.queue[0].length + srv.sim.units.length > before, 'blue can order a build from its carrier');
+  assert(a.lastSnap.money && a.lastSnap.money.length === 2, 'snapshots carry both sides\' money');
+
   // Snapshots stay in step with the server sim.
   const t0 = a.lastSnap.tick;
   await wait(400);

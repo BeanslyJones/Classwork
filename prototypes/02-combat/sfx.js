@@ -177,6 +177,36 @@
       tone(d, 'square', f, f, t, .002, .05, .25);
       tone(d, 'square', f * 1.5, f * 1.5, t + .07, .002, .06, .25);
     },
+    // one of your ships switched target (stronger after a manual retarget)
+    retarget(strong) {
+      if (!ready() || !allow('retarget', strong ? 2 : 1, strong ? 0.15 : 0.6)) return;
+      const d = out(0, strong ? 0.3 : 0.12, 0.1), t = ctx.currentTime;
+      tone(d, 'sawtooth', 500, 1400, t, .003, .12, .35);
+      if (strong) tone(d, 'square', 1400, 1400, t + .13, .002, .07, .25);
+    },
+    built() {
+      if (!ready() || !allow('built', 2, 0.4)) return;
+      const d = out(0, 0.3, 0.25), t = ctx.currentTime;
+      [523, 659, 784].forEach((f, i) => tone(d, 'triangle', f, f, t + i * 0.07, .004, .16, .5));
+      noise(d, 'bandpass', 600, 2400, 2, t, .01, .25, .2);
+    },
+    salvage() {
+      if (!ready() || !allow('salvage', 2, 0.3)) return;
+      const d = out(0, 0.28, 0.15), t = ctx.currentTime;
+      tone(d, 'square', 988, 988, t, .002, .05, .3); tone(d, 'square', 1319, 1319, t + .06, .002, .09, .3);
+    },
+    victory() {
+      if (!ready()) return;
+      const d = out(0, 0.45, 0.6), t = ctx.currentTime;
+      [262, 330, 392, 523, 659].forEach((f, i) => tone(d, 'sawtooth', f, f, t + i * 0.12, .01, .7, .2));
+      tone(d, 'sine', 65, 60, t, .02, 2, .5);
+    },
+    defeat() {
+      if (!ready()) return;
+      const d = out(0, 0.45, 0.6), t = ctx.currentTime;
+      [392, 330, 262, 196].forEach((f, i) => tone(d, 'sawtooth', f, f * 0.97, t + i * 0.18, .01, .8, .18));
+      tone(d, 'sine', 55, 35, t, .02, 2.2, .55);
+    },
     order() {
       if (!ready()) return;
       const d = out(0, 0.25, 0.05), t = ctx.currentTime;

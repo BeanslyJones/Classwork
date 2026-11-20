@@ -108,6 +108,37 @@
     .menu button { padding: 10px 14px; font-size: 14px; }
     #title .tips { font-size: 11px; }
   }
+  /* Sits between the speed box (left) and DODGE/RETARGET (right), centred in that gap. */
+  #buildBar { position: absolute; left: 252px; right: 170px; bottom: 14px; margin: 0 auto; width: max-content; max-width: calc(100% - 422px);
+              z-index: 8; display: none; gap: 5px; align-items: stretch; flex-wrap: wrap; justify-content: center;
+              background: rgba(16,20,29,.88); border: 1px solid #2e3a52; border-radius: 12px; padding: 6px; box-sizing: border-box; }
+  #buildBar.show { display: flex; }
+  #buildBar .money { display: flex; flex-direction: column; justify-content: center; padding: 0 8px; font-weight: 700; color: #ffd76a; min-width: 64px; }
+  #buildBar .money small { color: #8fa3c8; font-weight: 400; font-size: 10px; }
+  #buildBar button { margin: 0; padding: 5px 7px; min-width: 58px; display: flex; flex-direction: column; align-items: center; font-size: 11px; line-height: 1.2; }
+  #buildBar button b { font-size: 12px; letter-spacing: .04em; }
+  #buildBar button i { font-style: normal; color: #ffd76a; }
+  #buildBar button kbd { font: 9px system-ui; color: #5b6880; }
+  #buildBar button:disabled { opacity: .4; }
+  #buildBar .q { display: flex; align-items: center; gap: 3px; padding: 0 4px; font-size: 10px; color: #8fa3c8; max-width: 120px; flex-wrap: wrap; }
+  @media (max-height: 500px) { #buildBar { bottom: 6px; padding: 4px; left: 190px; right: 120px; max-width: calc(100% - 310px); gap: 3px; }
+    #buildBar button { min-width: 44px; padding: 3px 4px; font-size: 10px; } #buildBar button b { font-size: 10px; }
+    #buildBar button kbd, #buildBar .q { display: none; } #buildBar .money { min-width: 40px; padding: 0 4px; } }
+  #banner { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+            background: rgba(8,10,16,.55); pointer-events: none; }
+  #banner.show { display: flex; }
+  #banner h2 { margin: 0; font: 800 clamp(36px, 8vw, 84px)/1 system-ui; letter-spacing: .12em; }
+  #banner .row { display: flex; gap: 10px; pointer-events: auto; }
+  #banner button { padding: 12px 18px; font: 700 15px system-ui; letter-spacing: .1em; border-radius: 10px; }
+  #tut { position: absolute; top: 50px; left: 50%; transform: translateX(-50%); z-index: 12; display: none; width: min(520px, 86vw);
+         background: rgba(16,24,40,.94); border: 1px solid #6c9ad0; border-radius: 12px; padding: 12px 14px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  #tut.show { display: block; }
+  #tut .step { color: #8fa3c8; font-size: 11px; letter-spacing: .15em; }
+  #tut .msg { font-size: 14px; line-height: 1.45; margin: 6px 0 10px; color: #e4f2ff; }
+  #tut .msg b { color: #9fd0ff; }
+  #tut .row { display: flex; gap: 8px; justify-content: flex-end; }
+  #tut .wait { color: #e8c34a; font-size: 12px; margin-right: auto; align-self: center; }
+  @media (max-height: 500px) { #tut { top: 46px; padding: 8px 10px; } #tut .msg { font-size: 12px; margin: 4px 0 6px; } }
   #menuBtn { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 8; font-weight: 700;
              letter-spacing: .12em; padding: 7px 14px; border-radius: 8px; background: rgba(16,20,29,.85); }
 </style>
@@ -120,12 +151,14 @@
     </div>
     <div class="sub">COMBAT PROTOTYPE · 02</div>
     <div class="menu">
-      <button id="btnPlay" class="primary">BATTLE</button>
+      <button id="btnPlay" class="primary">SKIRMISH</button>
+      <button id="btnCarrier">DESTROY THE CARRIER</button>
+      <button id="btnTutorial">TUTORIAL</button>
       <button id="btnGarage">GARAGE</button>
     </div>
     <div class="sound">🔊 <input type="range" id="volIn" min="0" max="1" step="0.05"> <button id="muteBtn">Mute</button></div>
-    <div class="tips">Select a ship (click it or 1–6), click the map to send it · drag a ship to steer ·
-      Space dodge · F refocus · C camera · M mute</div>
+    <div class="tips">Select a ship (click it or 1–9), click the map to send it · drag a ship to steer ·
+      Space dodge · T retarget · C camera · M mute · Destroy the Carrier: Q W E A S D build</div>
   </div>
 </div>
 <div id="garage" class="overlay">
@@ -139,10 +172,12 @@
     <div class="cards" id="cards" style="margin-top:12px"></div>
   </div>
 </div>
+<div id="banner"><h2 id="bannerText"></h2><div style="color:#cdd6e4" id="bannerSub"></div>
+  <div class="row"><button id="bannerAgain">PLAY AGAIN</button><button id="bannerMenu">MENU</button></div></div>
 <div id="rotate">
   <div class="phone"></div>
   <div style="font-size:17px;font-weight:600">Turn your phone sideways</div>
-  <div style="color:#8fa3c8;max-width:280px">Played in landscape: steer with one thumb, DODGE and REFOCUS with the other.</div>
+  <div style="color:#8fa3c8;max-width:280px">Played in landscape: steer with one thumb, DODGE and RETARGET with the other.</div>
   <button id="portraitOk">Play upright anyway</button>
 </div>
 <div id="wrap">
@@ -151,13 +186,16 @@
     <div id="hud"></div>
     <button id="panelToggle">⚙</button>
     <button id="menuBtn">☰ MENU</button>
+    <div id="buildBar"></div>
+    <div id="tut"><div class="step" id="tutStep"></div><div class="msg" id="tutMsg"></div>
+      <div class="row"><span class="wait" id="tutWait"></span><button id="tutSkip">Skip tutorial</button><button id="tutNext">Next ▶</button></div></div>
     <div id="camBar">
       <div class="btns"><button data-cam="fit">Fit</button><button data-cam="snap">Snap</button><button data-cam="bubble">Bubble</button></div>
       <div id="camZoom"><label><span id="camZoomName">Zoom</span><span id="camZoomVal"></span></label>
         <input type="range" id="camZoomIn"></div>
     </div>
     <button id="dodgeBtn">DODGE</button>
-    <button id="focusBtn" title="Refocus: drop the lock so the next ship into the arc is targeted (F)">REFOCUS</button>
+    <button id="focusBtn" title="Retarget: drop the lock so the next enemy into the arc is targeted (T or F)">RETARGET</button>
     <div id="speedBox">
       <label>Game speed <span id="speedVal">0.5×</span></label>
       <input type="range" id="speed" min="0.1" max="2" step="0.05" value="0.5">
@@ -174,17 +212,22 @@
       dead centre can reach a full lock, the edge stays weak. Holding it in the arc builds the lock, which
       tightens spread, leads the target and speeds up reloads. Lock line: green = centre entry, red = edge;
       brighter = stronger lock. Torpedo bombers (6) fire slow torpedoes that do 3× to capitals.
-      One energy pool = health + ammo + boost. F: refocus. Click/tap a ship or press 1–6 to select it; click the map to send it that way (or drag the ship). Click the selected ship again or Esc to deselect. R: restart. N: new seed.
+      One energy pool = health + ammo + boost. T (or F): retarget. Click/tap a ship or press 1–9 to select it; click the map to send it that way (or drag the ship). Click the selected ship again or Esc to deselect. R: restart. N: new seed.
       Game speed (bottom left) slows the whole battle down; P pauses.<br><br>
       Camera (top right, C cycles): <b>Fit</b> keeps all your ships in frame,
       <b>Snap</b> zooms to the selected ship, <b>Bubble</b> keeps the wide view and
       magnifies around it. Grabbing a ship selects it; tap it again (or Esc) to deselect
       (closes the bubble). The slider under the buttons is the current mode's zoom.
       Ships hidden under the bubble show through as outlines.<br><br>
-      Built for landscape: one thumb drags ships, the other hits DODGE and REFOCUS
+      Built for landscape: one thumb drags ships, the other hits DODGE and RETARGET
       (bottom right). The bubble magnifies the middle of the selected ship's firing arc.<br><br>
-      The AI matches your APM (actions per minute: grabs, dodges, refocuses): each AI
+      The AI matches your APM (actions per minute: grabs, orders, dodges, retargets): each AI
       action re-aims one of its ships, so it juggles at your pace. Both show top left.<br><br>
+      Cones are split green / yellow / red: an enemy entering through the green middle can be fully locked,
+      the red edges barely. You always see your cones; enemy cones show only near your ships (CAMERA → enemyConePx).
+      Brackets snap onto a ship's new target when it switches; RETARGET makes a bigger cue and a beep.<br><br>
+      Destroy the Carrier: earn money every second and by flying over wrecks; build ships from your carrier
+      (Q W E A S D or the bar at the bottom); kill the enemy carrier to win. One Grayzer per side.<br><br>
       Capitals have weak points (rings on the hull): bridge (nose) kills the turret,
       engines (tail) cripple speed, vents (sides) bleed energy. Hits there do extra damage.
     </div>
@@ -220,7 +263,8 @@
 <script>
 'use strict';
 if (typeof CombatSim === 'undefined') window.__showErr('sim.js did not load (CombatSim missing)');
-const { Sim, TUNABLES, CLASSES, mulberry32 } = CombatSim;
+const { Sim, TUNABLES, CLASSES, BUILDABLE, mulberry32 } = CombatSim;
+const BUILD_KEYS = ['q', 'w', 'e', 'a', 's', 'd'];
 
 let seed = 4242;
 let overrides = {};
@@ -266,10 +310,18 @@ for (const key in TUNABLES) {
   });
 }
 
+let gameMode = 'skirmish'; // 'skirmish' | 'carrier' | 'tutorial'
+let bannerShown = false;
+const TUTORIAL_ROSTER = [
+  { cls: 'fighter', team: 0 }, { cls: 'heavy', team: 0 }, { cls: 'capital', team: 0 },
+  { cls: 'fighter', team: 1 }, { cls: 'fighter', team: 1 },
+];
 function restart(newSeed) {
   if (NET) { act({ type: 'restart', newSeed: !!newSeed }); return; }
   if (newSeed) seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-  sim = new Sim(seed, overrides);
+  if (gameMode === 'tutorial') sim = new Sim(seed, Object.assign({}, overrides, { spawnDist: 470, aiApmMatch: 0.4 }), TUTORIAL_ROSTER);
+  else sim = new Sim(seed, overrides, null, { mode: gameMode });
+  bannerShown = false; document.getElementById('banner').classList.remove('show');
   selected = -1;
   survivalTime = 0;
   flashes.length = 0;
@@ -322,6 +374,7 @@ const CAM_TUN = {
   bubbleZoom: { value: 3,   min: 1.5, max: 8,   step: 0.1, tip: 'Bubble: magnification inside the bubble.' },
   bubbleGrow: { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'Bubble: how fast it grows open / shrinks closed.' },
   camSmooth:  { value: 6,   min: 1,   max: 20,  step: 0.5, tip: 'How quickly the camera glides to its target (higher = snappier).' },
+  enemyConePx: { value: 160, min: 0,  max: 800, step: 10,  tip: 'Enemy firing cones show only when that enemy is within this many screen pixels of one of your ships (800 = always).' },
 };
 const camCfg = {};
 for (const k in CAM_TUN) camCfg[k] = CAM_TUN[k].value;
@@ -389,6 +442,9 @@ const camState = { cx: 0, cy: 0, s: 0, bubble: 0 }; // smoothed camera (world ce
 // ---- Pointer input: one path for mouse and touch. ----
 let pointer = { x: 0, y: 0, down: false, id: -1, sx: 0, sy: 0, dragged: false, wasSelected: false };
 const orderMarks = []; // click-to-move markers (render-only)
+const retargetFx = []; // target brackets when one of your ships switches target (render-only)
+const floats = []; // rising text (+$ salvage, NEW ship)
+function floatText(x, y, text, color) { floats.push({ x: x, y: y, text: text, color: color, age: 0 }); }
 let cam = { scale: 1, ox: 0, oy: 0 };
 function toWorld(px, py) { return { x: (px - cam.ox) / cam.scale, y: (py - cam.oy) / cam.scale }; }
 function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -396,7 +452,7 @@ function localXY(e) { const r = cv.getBoundingClientRect(); return { x: e.client
 cv.addEventListener('pointerdown', e => {
   e.preventDefault();
   if (pointer.down) return;
-  if (!NET && (sim.aliveCount(MINE()) === 0 || sim.aliveCount(THEIRS()) === 0)) { restart(false); return; }
+  if (!NET && sim.mode !== 'carrier' && gameMode !== 'tutorial' && (sim.aliveCount(MINE()) === 0 || sim.aliveCount(THEIRS()) === 0)) { restart(false); return; }
   const p = localXY(e);
   pointer.down = true; pointer.id = e.pointerId; pointer.x = p.x; pointer.y = p.y;
   cv.setPointerCapture(e.pointerId);
@@ -436,6 +492,7 @@ function endPointer(e) {
   if (!tap) flushAim(true);
   pointer.down = false; pointer.id = -1;
   act({ type: 'release' }); // a tap releases on the ship's own heading: selects, no order
+  if (!tap) tutEvent('dragRelease');
   if (tap && pointer.wasSelected) selected = -1;
 }
 cv.addEventListener('pointerup', endPointer);
@@ -445,13 +502,13 @@ window.addEventListener('keydown', e => {
   if (e.repeat) return;
   // Menus up: only Enter (start) and M (mute) do anything.
   if (titleEl.classList.contains('show') || garageEl.classList.contains('show')) {
-    if (e.key === 'Enter' && titleEl.classList.contains('show')) startBattle();
+    if (e.key === 'Enter' && titleEl.classList.contains('show')) startBattle(NET ? undefined : 'skirmish');
     if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
     return;
   }
   if (e.key >= '1' && e.key <= '9') {
     const id = parseInt(e.key, 10) - 1;
-    // Keys 1-6 SELECT your Nth ship (camera, bubble, DODGE / REFOCUS target).
+    // Keys 1-9 SELECT your Nth ship (camera, bubble, DODGE / RETARGET target).
     // Selecting never gives an order — only clicking and dragging a ship steers it.
     const mine = sim.units.filter(v => v.team === MINE());
     const pick = mine[id];
@@ -459,12 +516,14 @@ window.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape') selected = -1;
   if (e.key === ' ') { e.preventDefault(); act({ type: 'dodge', unit: selected >= 0 ? selected : undefined }); }
-  if (e.key === 'f' || e.key === 'F') act({ type: 'refocus', unit: selected >= 0 ? selected : undefined });
+  if (e.key === 'f' || e.key === 'F' || e.key === 't' || e.key === 'T') act({ type: 'refocus', unit: selected >= 0 ? selected : undefined });
   if (e.key === 'r' || e.key === 'R') restart(false);
   if (e.key === 'n' || e.key === 'N') restart(true);
   if (e.key === 'p' || e.key === 'P') setPaused(!paused);
   if (e.key === 'c' || e.key === 'C') setCamMode({ fit: 'snap', snap: 'bubble', bubble: 'fit' }[camMode]);
   if (e.key === 'm' || e.key === 'M') { SFX.setMuted(!SFX.muted); syncSound(); }
+  const bk = BUILD_KEYS.indexOf(e.key.toLowerCase());
+  if (bk >= 0 && sim.mode === 'carrier') requestBuild(BUILDABLE[bk]);
 });
 
 // ---- Fixed-tick sim, decoupled render. ----
@@ -483,6 +542,7 @@ function earAt(x, y) {
 }
 function pushFlashes(events) {
   for (const e of events) {
+    if (tut) { const eu = e.unit !== undefined ? sim.units[e.unit] : null; if (e.team === MINE() || (eu && eu.team === MINE())) tutEvent(e.type); }
     if (e.type === 'detonation') {
       flashes.push({ x: e.x, y: e.y, r: e.aoe, age: 0 });
       const a = earAt(e.x, e.y); SFX.impact(!!e.big, a.pan, a.vol);
@@ -500,7 +560,18 @@ function pushFlashes(events) {
       if (u.team === MINE()) SFX.dodge(earAt(u.x, u.y).pan);
     } else if (e.type === 'locked') {
       const u = sim.units[e.unit];
-      if (u && u.team === MINE() && (u.held || u.id === selected)) SFX.lock(e.entryQ || 0);
+      if (!u || u.team !== MINE()) continue;
+      // Visual cue on every target switch of yours; a stronger one (and sound)
+      // when it follows a manual retarget.
+      retargetFx.push({ target: e.target, hue: Math.round(120 * (e.entryQ || 0)), age: 0, dur: e.retarget ? 0.8 : 0.45, strong: !!e.retarget });
+      if (e.retarget) SFX.retarget(true);
+      else if (u.held || u.id === selected) SFX.lock(e.entryQ || 0);
+    } else if (e.type === 'built') {
+      if (e.team === MINE()) { SFX.built(); const u = sim.units[e.unit]; if (u) floatText(u.x, u.y, 'NEW ' + (SHIP_INFO[e.cls] || {}).name, '#cfe8ff'); }
+    } else if (e.type === 'salvage') {
+      if (e.team === MINE()) { SFX.salvage(); floatText(e.x, e.y, '+$' + e.value, '#ffd76a'); }
+    } else if (e.type === 'victory') {
+      if (e.team === MINE()) SFX.victory(); else SFX.defeat();
     }
   }
 }
@@ -539,6 +610,7 @@ function frame(now) {
     }
   }
   render(dtReal);
+  tutTick();
   requestAnimationFrame(frame);
 }
 
@@ -548,9 +620,9 @@ if (NET) {
   es.addEventListener('hello', ev => {
     const h = JSON.parse(ev.data);
     netId = h.id; myTeam = h.seat;
-    if (h.seed !== seed || !sim._net) {
+    if (h.seed !== seed || !sim._net || (h.mode && h.mode !== sim.mode)) {
       seed = h.seed; overrides = h.overrides || {};
-      sim = new Sim(seed, overrides); sim._net = true;
+      sim = new Sim(seed, overrides, null, { mode: h.mode || 'skirmish' }); sim._net = true;
       selected = -1; flashes.length = 0;
     }
     applyLobby(h);
@@ -595,6 +667,7 @@ const HULLS = {
   aaa:         [[1.0, 0], [0.7, 0.45], [0.2, 0.55], [0.05, 0.95], [-0.45, 0.95], [-0.55, 0.6], [-0.95, 0.45], [-0.95, 0]],
   torpedo:     [[0.75, 0], [0.85, 0.16], [1.3, 0.22], [1.3, 0.55], [0.6, 0.6], [-0.2, 0.92], [-0.9, 0.82], [-0.7, 0.3], [-0.9, 0]],
   capital:     [[1.3, 0], [1.1, 0.35], [0.5, 0.45], [0.3, 0.7], [-0.3, 0.7], [-0.5, 0.55], [-1.0, 0.55], [-1.1, 0.3], [-1.0, 0]],
+  carrier:     [[1.25, 0], [1.15, 0.3], [0.85, 0.42], [0.8, 0.62], [-0.2, 0.62], [-0.3, 0.5], [-0.95, 0.5], [-1.15, 0.32], [-1.1, 0]],
 };
 function hullPath(clsName, r, c) {
   c = c || ctx;
@@ -644,6 +717,8 @@ function render(dtReal) {
 
   // Age effects once per frame (both the main view and the bubble draw them).
   for (let i = orderMarks.length - 1; i >= 0; i--) { orderMarks[i].age += dtReal; if (orderMarks[i].age >= 0.6) orderMarks.splice(i, 1); }
+  for (let i = retargetFx.length - 1; i >= 0; i--) { retargetFx[i].age += dtReal; if (retargetFx[i].age >= retargetFx[i].dur) retargetFx.splice(i, 1); }
+  for (let i = floats.length - 1; i >= 0; i--) { floats[i].age += dtReal; if (floats[i].age >= 1.4) floats.splice(i, 1); }
   for (let i = flashes.length - 1; i >= 0; i--) {
     flashes[i].age += dtReal;
     if (flashes[i].age >= (flashes[i].big ? 0.6 : 0.35)) flashes.splice(i, 1);
@@ -651,6 +726,7 @@ function render(dtReal) {
 
   ctx.fillStyle = '#0b0e14';
   ctx.fillRect(0, 0, W, H);
+  updateConeVisibility();
   drawWorld();
 
   // Bubble: magnify around the current ship, drawn over the wide view.
@@ -720,14 +796,50 @@ function render(dtReal) {
     const aiApm = NET ? (sim._netAiApm || [0, 0])[THEIRS()] : Math.round(sim.aiApm(THEIRS()));
     apmLine = '<div>APM you ' + myApm + (sim.human[THEIRS()] ? '' : ' · AI ' + aiApm) + '</div>';
   }
+  const carrierMode = sim.mode === 'carrier';
+  const moneyLine = carrierMode && myTeam >= 0 ? '<div style="color:#ffd76a;font-weight:700">$' + Math.floor(sim.money[MINE()]) + ' <span style="color:#8fa3c8;font-weight:400">+' + sim.T.incomePerSec + '/s · salvage wrecks</span></div>' : '';
   hud.innerHTML =
-    '<div class="big">' + mine + ' vs ' + foes + '</div>' +
-    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' + apmLine + netLine +
-    (mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — ' + again + '</div>' :
+    '<div class="big">' + mine + ' vs ' + foes + (carrierMode ? ' <span style="font-size:12px;color:#8fa3c8">DESTROY THE CARRIER</span>' : '') + '</div>' +
+    '<div>t ' + survivalTime.toFixed(1) + 's · seed ' + seed + '</div>' + moneyLine + apmLine + netLine +
+    (carrierMode || gameMode === 'tutorial' ? '' :
+     mine === 0 ? '<div class="big" style="color:#e85a4a">WIPED — ' + again + '</div>' :
      foes === 0 ? '<div class="big" style="color:#5fd08a">CLEARED — ' + again + '</div>' : '');
+  updateBuildBar();
+  if (carrierMode && sim.winner >= 0 && !bannerShown) showBanner(sim.winner === MINE() ? 'VICTORY' : 'DEFEAT',
+    sim.winner === MINE() ? 'The enemy carrier is destroyed.' : 'Your carrier was destroyed.', sim.winner === MINE() ? '#5fd08a' : '#e85a4a');
 }
 
 // Draws the whole world with the current `cam` transform.
+// One firing cone in zones: red | yellow | green | yellow | red, edged in team colour.
+const ZONE_RGB = { g: '95,208,138', y: '232,195,74', r: '232,90,74' };
+function drawCone(x, y, ang, half, range, strength, team) {
+  if (!half || !range) return;
+  const b = half / 3, base = 0.11 * strength;
+  const bands = [[-half, -2 * b, 'r'], [-2 * b, -b, 'y'], [-b, b, 'g'], [b, 2 * b, 'y'], [2 * b, half, 'r']];
+  for (const [a0, a1, z] of bands) {
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, range, ang + a0, ang + a1); ctx.closePath();
+    ctx.fillStyle = 'rgba(' + ZONE_RGB[z] + ',' + (z === 'g' ? base : base * 0.75) + ')';
+    ctx.fill();
+  }
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, range, ang - half, ang + half); ctx.closePath();
+  ctx.strokeStyle = team === 0 ? 'rgba(159,208,255,' + 0.35 * strength + ')' : 'rgba(255,120,100,' + 0.4 * strength + ')';
+  ctx.lineWidth = 1 / cam.scale; ctx.stroke();
+}
+// Which ships' cones to draw this frame (decided on the main view, in screen pixels).
+const coneVisible = new Set();
+function updateConeVisibility() {
+  coneVisible.clear();
+  const mineAlive = sim.units.filter(u => u.team === MINE() && u.state === 'alive');
+  const px = camCfg.enemyConePx;
+  for (const u of sim.units) {
+    if (u.state !== 'alive' || !u.guns.length) continue;
+    if (u.team === MINE()) { coneVisible.add(u.id); continue; }
+    for (const m of mineAlive) {
+      if (Math.hypot(u.x - m.x, u.y - m.y) * cam.scale <= px) { coneVisible.add(u.id); break; }
+    }
+  }
+}
+
 function drawWorld() {
   const R = sim.T.arenaRadius;
   ctx.save();
@@ -753,6 +865,24 @@ function drawWorld() {
     ctx.fill(); ctx.stroke();
   }
 
+  // Firing cones, split into entry-quality zones: a target that enters through
+  // the green middle can reach a full lock, yellow less, the red edges least.
+  // All of yours are shown; an enemy's only when it is near one of your ships.
+  for (const u of sim.units) {
+    if (u.state !== 'alive' || !coneVisible.has(u.id)) continue;
+    const cls = CLASSES[u.cls], mine = u.team === MINE();
+    for (const g of u.guns) {
+      const gp = sim.gunPos(u, g);
+      drawCone(gp.x, gp.y, g.gunAngle, cls.coneHalf, cls.coneRange, mine ? 1 : 0.8, u.team);
+      if (g !== u) { // turret: faint arc showing the 90 deg sector it can swing through
+        const c = u.heading + g.mount;
+        ctx.beginPath(); ctx.arc(gp.x, gp.y, cls.coneRange, c - g.traverse - cls.coneHalf, c + g.traverse + cls.coneHalf);
+        ctx.strokeStyle = u.team === 0 ? 'rgba(159,208,255,0.18)' : 'rgba(255,159,138,0.18)';
+        ctx.setLineDash([4 / cam.scale, 6 / cam.scale]); ctx.lineWidth = 1 / cam.scale; ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  }
+
   // Units
   for (const u of sim.units) {
     if (u.state === 'crystallized') continue;
@@ -760,17 +890,6 @@ function drawWorld() {
     const r = sim.T.unitRadius * cls.size * (u.cls === 'bomber' || u.cls === 'heavy' || u.cls === 'torpedo' ? 1.3 : u.cls === 'interceptor' ? 0.8 : 1);
     ctx.save();
     ctx.translate(u.x, u.y);
-
-    // Firing cone (faint), drawn at the gun angle: the hull heading for fixed guns,
-    // the turret angle for capitals.
-    if (u.state === 'alive') {
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.arc(0, 0, cls.coneRange, u.gunAngle - cls.coneHalf, u.gunAngle + cls.coneHalf);
-      ctx.closePath();
-      ctx.fillStyle = u.team === 0 ? 'rgba(120,170,255,0.045)' : 'rgba(255,130,110,0.045)';
-      ctx.fill();
-    }
 
     // Energy ring = health + ammo + boost, the only bar there is
     if (u.state === 'alive') {
@@ -780,7 +899,13 @@ function drawWorld() {
       ctx.strokeStyle = frac > 0.5 ? '#5fd08a' : (frac > 0.2 ? '#e8c34a' : '#e85a4a');
       ctx.lineWidth = 3 / cam.scale;
       ctx.stroke();
-      if (sim.human[u.team] && u.momentum <= 0.25) { // juggle warning
+      if (cls.battery) { // Grayzer battery: cyan outer ring
+        const bf = u.battery / (cls.battery.max * sim.T.batteryScale || 1);
+        ctx.beginPath();
+        ctx.arc(0, 0, r + 12, -Math.PI / 2, -Math.PI / 2 + bf * Math.PI * 2);
+        ctx.strokeStyle = 'rgba(90,220,255,0.85)'; ctx.lineWidth = 2.5 / cam.scale; ctx.stroke();
+      }
+      if (sim.human[u.team] && !cls.noStall && u.momentum <= 0.25) { // juggle warning
         ctx.beginPath(); ctx.arc(0, 0, r + 12, 0, 7);
         ctx.strokeStyle = 'rgba(232,90,74,' + (0.4 + 0.6 * Math.abs(Math.sin(sim.tick * 0.3))) + ')';
         ctx.lineWidth = 2 / cam.scale;
@@ -820,18 +945,28 @@ function drawWorld() {
     }
     ctx.restore();
 
-    // Turret (capitals only): dome + barrel drawn at gunAngle, independent of hull.
+    // Turrets (Grayzer): a dome + barrel on each side, swinging within its sector.
     if (u.state === 'alive' && cls.turret) {
-      const damaged = u.weak.some(w => w.out && w.type === 'bridge'); // fire control hit: orange turret
-      ctx.beginPath(); ctx.arc(u.x, u.y, r * 0.38, 0, 7);
-      ctx.fillStyle = damaged ? '#3a2208' : '#0b0e14'; ctx.fill();
-      ctx.strokeStyle = damaged ? '#ff9a3c' : u.held ? '#fff' : TEAMCOL[u.team];
-      ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+      const damaged = u.weak.some(w => w.out && w.type === 'bridge'); // fire control hit: orange turrets
+      for (const g of u.guns) {
+        const gp = sim.gunPos(u, g);
+        ctx.beginPath(); ctx.arc(gp.x, gp.y, r * 0.28, 0, 7);
+        ctx.fillStyle = damaged ? '#3a2208' : '#0b0e14'; ctx.fill();
+        ctx.strokeStyle = damaged ? '#ff9a3c' : u.held ? '#fff' : TEAMCOL[u.team];
+        ctx.lineWidth = 2 / cam.scale; ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(gp.x, gp.y);
+        ctx.lineTo(gp.x + Math.cos(g.gunAngle) * r * 0.9, gp.y + Math.sin(g.gunAngle) * r * 0.9);
+        ctx.lineWidth = 3 / cam.scale;
+        ctx.stroke();
+      }
+    }
+    // Carrier: build progress ring while its hangar is working.
+    if (u.state === 'alive' && cls.noGuns && sim.queue[u.team] && sim.queue[u.team][0]) {
+      const job = sim.queue[u.team][0], full = CLASSES[job.cls].buildTime;
       ctx.beginPath();
-      ctx.moveTo(u.x, u.y);
-      ctx.lineTo(u.x + Math.cos(u.gunAngle) * r * 1.5, u.y + Math.sin(u.gunAngle) * r * 1.5);
-      ctx.lineWidth = 3.5 / cam.scale;
-      ctx.stroke();
+      ctx.arc(u.x, u.y, r + 18, -Math.PI / 2, -Math.PI / 2 + (1 - job.left / full) * Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200,230,255,0.8)'; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
     }
 
     if (u.id === selected && u.state === 'alive' && !u.held) {
@@ -848,24 +983,78 @@ function drawWorld() {
     }
   }
 
-  // Lock lines (your ships): colour = entry quality, strength = current lock.
+  // Lock lines (your ships, every gun): colour = entry quality, strength = current lock.
   for (const u of sim.units) {
-    if (u.team !== MINE() || u.state !== 'alive' || u.targetId < 0) continue;
-    const t = sim.units[u.targetId];
-    if (!t || t.state !== 'alive') continue;
-    const hue = Math.round(120 * u.entryQ); // 0 red .. 120 green
-    ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(t.x, t.y);
-    ctx.strokeStyle = 'hsla(' + hue + ',85%,55%,' + (0.15 + 0.65 * u.lockQ) + ')';
-    ctx.lineWidth = (1 + 2.5 * u.lockQ) / cam.scale;
-    ctx.stroke();
-    if (u.held) { // lock meter around the target for the ship you're flying
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, sim.T.unitRadius * CLASSES[t.cls].size + 16, -Math.PI / 2, -Math.PI / 2 + u.lockCap * Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, sim.T.unitRadius * CLASSES[t.cls].size + 16, -Math.PI / 2, -Math.PI / 2 + u.lockQ * Math.PI * 2);
-      ctx.strokeStyle = 'hsl(' + hue + ',85%,60%)'; ctx.stroke();
+    if (u.team !== MINE() || u.state !== 'alive') continue;
+    for (const g of u.guns) {
+      if (g.targetId < 0) continue;
+      const t = sim.units[g.targetId];
+      if (!t || t.state !== 'alive') continue;
+      const gp = sim.gunPos(u, g);
+      const hue = Math.round(120 * g.entryQ); // 0 red .. 120 green
+      ctx.beginPath(); ctx.moveTo(gp.x, gp.y); ctx.lineTo(t.x, t.y);
+      ctx.strokeStyle = 'hsla(' + hue + ',85%,55%,' + (0.15 + 0.65 * g.lockQ) + ')';
+      ctx.lineWidth = (1 + 2.5 * g.lockQ) / cam.scale;
+      ctx.stroke();
+      if (u.held || u.id === selected) { // lock meter around the target for the ship you're flying/selected
+        const rr = sim.T.unitRadius * CLASSES[t.cls].size + 16;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, rr, -Math.PI / 2, -Math.PI / 2 + g.lockCap * Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 3 / cam.scale; ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, rr, -Math.PI / 2, -Math.PI / 2 + g.lockQ * Math.PI * 2);
+        ctx.strokeStyle = 'hsl(' + hue + ',85%,60%)'; ctx.stroke();
+      }
     }
+  }
+  // Retarget cue: brackets snap in around a ship's new target (bigger + "RETARGET"
+  // after a manual retarget).
+  for (const f of retargetFx) {
+    const t = sim.units[f.target];
+    if (!t || t.state !== 'alive') continue;
+    const k = Math.min(1, f.age / f.dur), rr = (sim.T.unitRadius * CLASSES[t.cls].size + 10) * (f.strong ? 2.6 - 1.6 * k : 1.8 - 0.8 * k);
+    const L = rr * 0.45, a = 1 - k * 0.7;
+    ctx.strokeStyle = 'hsla(' + f.hue + ',90%,62%,' + a + ')';
+    ctx.lineWidth = (f.strong ? 3 : 2) / cam.scale;
+    ctx.beginPath();
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      ctx.moveTo(t.x + sx * rr, t.y + sy * (rr - L)); ctx.lineTo(t.x + sx * rr, t.y + sy * rr); ctx.lineTo(t.x + sx * (rr - L), t.y + sy * rr);
+    }
+    ctx.stroke();
+    if (f.strong) {
+      ctx.fillStyle = 'hsla(' + f.hue + ',90%,70%,' + a + ')';
+      ctx.font = 'bold ' + (11 / cam.scale) + 'px system-ui';
+      ctx.fillText('RETARGET', t.x - 26 / cam.scale, t.y - rr - 6 / cam.scale);
+    }
+  }
+
+  // Grayzer battery beams: cyan line to each friendly ship it is charging.
+  for (const v of sim.units) {
+    if (v.state !== 'alive' || v.charging === undefined || sim.tick - v.charging > 2) continue;
+    let src = null, best = Infinity;
+    for (const u of sim.units) {
+      const c = CLASSES[u.cls];
+      if (!c.battery || u.team !== v.team || u.state !== 'alive' || u === v) continue;
+      const d = Math.hypot(u.x - v.x, u.y - v.y);
+      if (d <= c.battery.range && d < best) { best = d; src = u; }
+    }
+    if (!src) continue;
+    ctx.beginPath(); ctx.moveTo(src.x, src.y); ctx.lineTo(v.x, v.y);
+    ctx.strokeStyle = 'rgba(90,220,255,' + (0.35 + 0.25 * Math.sin(sim.tick * 0.6)) + ')';
+    ctx.setLineDash([5 / cam.scale, 4 / cam.scale]);
+    ctx.lineWidth = 2 / cam.scale; ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Wrecks (Destroy the Carrier): salvage worth money to whoever flies over it.
+  for (const w of sim.wrecks) {
+    const spin = sim.tick * 0.03, sz = 7 + Math.min(8, w.value / 20);
+    ctx.save(); ctx.translate(w.x, w.y); ctx.rotate(spin);
+    ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(0, sz * 0.7); ctx.lineTo(-sz, 0); ctx.lineTo(0, -sz * 0.7); ctx.closePath();
+    ctx.fillStyle = 'rgba(255,215,106,' + (w.ttl < 8 ? 0.25 + 0.25 * Math.sin(sim.tick * 0.5) : 0.45) + ')';
+    ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.5 / cam.scale; ctx.fill(); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ffd76a'; ctx.font = (10 / cam.scale) + 'px system-ui';
+    ctx.fillText('$' + w.value, w.x + sz + 3 / cam.scale, w.y + 3 / cam.scale);
   }
 
   // Projectiles (torpedoes: big, slow, red-orange with a trail)
@@ -906,6 +1095,13 @@ function drawWorld() {
     ctx.setLineDash([]);
   }
 
+  for (const f of floats) {
+    ctx.fillStyle = f.color; ctx.globalAlpha = Math.max(0, 1 - f.age / 1.4);
+    ctx.font = 'bold ' + (13 / cam.scale) + 'px system-ui';
+    ctx.fillText(f.text, f.x - 20 / cam.scale, f.y - (20 + 30 * f.age) / cam.scale);
+    ctx.globalAlpha = 1;
+  }
+
   // Click-to-move markers
   for (const m of orderMarks) {
     const t = m.age / 0.6;
@@ -938,16 +1134,17 @@ const SHIP_INFO = {
   bomber:      { name: 'MANTA',    role: 'Bomber',           blurb: 'Slow bombs with a huge blast. Punishes anything that clumps.' },
   aaa:         { name: 'BULWARK',  role: 'Flak platform',    blurb: 'Widest firing arc and rapid flak. Slow — let them come to it.' },
   torpedo:     { name: 'HARPOON',  role: 'Torpedo bomber',   blurb: 'Slow torpedoes that wreck capitals. Small ships can dodge them.' },
-  capital:     { name: 'GRAYZER',  role: 'Capital dropship', blurb: 'Your dropship. The only turret in the fleet; guard its weak points.' },
+  capital:     { name: 'GRAYZER',  role: 'Capital dropship', blurb: 'Your dropship, one per side. A turret on each flank and a battery that recharges nearby allies.' },
+  carrier:     { name: 'HIVE',     role: 'Carrier',          blurb: 'Builds your ships in Destroy the Carrier. No guns. Lose it and you lose.' },
 };
-const GARAGE_ORDER = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'capital'];
+const GARAGE_ORDER = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo', 'capital', 'carrier'];
 let garageAnim = null;
 
 function shipStats(k) {
-  const c = CLASSES[k];
+  const c = CLASSES[k], guns = c.noGuns ? 0 : (c.turrets ? c.turrets.length : 1);
   return {
-    hull: c.energyMax, speed: c.speed, turn: c.turnRadius, dps: c.damage / c.cooldown,
-    rate: 1 / c.cooldown, range: c.coneRange, arc: Math.round(c.coneHalf * 180 / Math.PI), bullet: c.projSpeed,
+    hull: c.energyMax, speed: c.speed, turn: c.turnRadius, dps: guns ? c.damage / c.cooldown : 0,
+    rate: guns ? 1 / c.cooldown : 0, range: c.coneRange, arc: Math.round(c.coneHalf * 180 / Math.PI), bullet: guns ? c.projSpeed : 0,
   };
 }
 function buildGarage() {
@@ -969,8 +1166,13 @@ function buildGarage() {
   GARAGE_ORDER.forEach((k, i) => {
     const c = CLASSES[k], info = SHIP_INFO[k], st = all[i];
     const tags = [];
-    if (c.turret) tags.push('Turret');
+    if (c.turrets) tags.push(c.turrets.length + ' side turrets · 90° each');
+    else if (c.noGuns) tags.push('No guns');
     else tags.push('Fixed forward guns');
+    if (c.battery) tags.push('Battery: recharges allies');
+    if (c.noGuns) tags.push('Builds ships');
+    if (c.cost) tags.push('$' + c.cost + ' · ' + c.buildTime + 's build');
+    else if (k === 'capital') tags.push('1 per side');
     if (c.vsCapital) tags.push(c.vsCapital + '× vs capitals');
     if (c.weakPoints) tags.push(c.weakPoints.length + ' weak points');
     if (c.aoe >= 60) tags.push('Big blast');
@@ -993,9 +1195,12 @@ function drawGarage(t) {
     g.translate(cvs.width / 2, cvs.height / 2);
     // firing arc
     g.save(); g.rotate(-Math.PI / 2 + Math.sin(t / 1400) * 0.25);
-    const r = k === 'capital' ? 52 : 34;
-    g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 100, -c.coneHalf, c.coneHalf); g.closePath();
-    g.fillStyle = 'rgba(120,170,255,0.10)'; g.fill();
+    const r = k === 'carrier' ? 60 : k === 'capital' ? 52 : 34;
+    const arcs = c.turrets ? c.turrets.map(t => [t.mount, t.traverse + c.coneHalf]) : c.noGuns ? [] : [[0, c.coneHalf]];
+    for (const [m, h] of arcs) {
+      g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 100, m - h, m + h); g.closePath();
+      g.fillStyle = 'rgba(120,170,255,0.10)'; g.fill();
+    }
     hullPath(k, r, g);
     g.fillStyle = '#9fd0ff'; g.fill();
     g.strokeStyle = '#e4f2ff'; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
@@ -1003,7 +1208,7 @@ function drawGarage(t) {
       g.beginPath(); g.arc(w.x * r, w.y * r, w.r * r, 0, 7);
       g.strokeStyle = '#ffd76a'; g.lineWidth = 2; g.stroke();
     }
-    if (c.turret) { g.beginPath(); g.arc(0, 0, r * 0.38, 0, 7); g.fillStyle = '#0b0e14'; g.fill(); g.strokeStyle = '#9fd0ff'; g.stroke(); }
+    if (c.turrets) for (const t of c.turrets) { g.beginPath(); g.arc(t.ox * r, t.oy * r, r * 0.28, 0, 7); g.fillStyle = '#0b0e14'; g.fill(); g.strokeStyle = '#9fd0ff'; g.stroke(); }
     g.restore();
   }
   garageAnim = requestAnimationFrame(drawGarage);
@@ -1013,14 +1218,117 @@ function showTitle() {
   if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; }
   // Attract mode offline: both sides AI while the menu is up.
   if (!NET) { sim.setHuman(0, false); selected = -1; }
+  stopTutorial();
+  document.getElementById('banner').classList.remove('show');
 }
 function hideOverlays() { titleEl.classList.remove('show'); garageEl.classList.remove('show'); if (garageAnim) { cancelAnimationFrame(garageAnim); garageAnim = null; } }
-function startBattle() {
+function startBattle(mode) {
   SFX.unlock(); SFX.ui();
   hideOverlays();
-  if (!NET) { restart(true); setPaused(false); }
+  if (NET) {
+    if (mode) act({ type: 'restart', newSeed: true, mode: mode });
+  } else {
+    gameMode = mode || 'skirmish';
+    restart(true); setPaused(false);
+    if (gameMode === 'tutorial') startTutorial(); else stopTutorial();
+  }
   SFX.sting();
 }
+
+// ---- Build bar (Destroy the Carrier) ----
+const buildBar = document.getElementById('buildBar');
+let buildBarSig = '';
+function requestBuild(cls) {
+  if (myTeam < 0) return;
+  const c = CLASSES[cls];
+  if (sim.money[MINE()] < c.cost) return;
+  act({ type: 'build', cls: cls });
+  SFX.ui();
+}
+function updateBuildBar() {
+  const show = sim.mode === 'carrier' && myTeam >= 0 && !titleEl.classList.contains('show') && !!sim.carrierOf(MINE());
+  buildBar.classList.toggle('show', show);
+  if (!show) return;
+  const money = Math.floor(sim.money[MINE()]), q = sim.queue[MINE()] || [];
+  const sig = money + '|' + q.map(j => j.cls + Math.ceil(j.left)).join(',');
+  if (sig === buildBarSig) return; // only rebuild the DOM when something changed
+  buildBarSig = sig;
+  let html = '<div class="money">$' + money + '<small>+' + sim.T.incomePerSec + '/s</small></div>';
+  BUILDABLE.forEach((k, i) => {
+    const c = CLASSES[k];
+    html += '<button data-b="' + k + '"' + (money < c.cost ? ' disabled' : '') + ' title="' + SHIP_INFO[k].role + ' · ' + c.buildTime + 's to build">' +
+      '<b>' + SHIP_INFO[k].name + '</b><i>$' + c.cost + '</i><kbd>' + BUILD_KEYS[i].toUpperCase() + '</kbd></button>';
+  });
+  html += '<div class="q">' + (q.length ? q.map((j, i) => (i === 0 ? '▶ ' : '') + SHIP_INFO[j.cls].name + ' ' + Math.ceil(j.left) + 's').join(' · ') : 'hangar idle') + '</div>';
+  buildBar.innerHTML = html;
+}
+buildBar.addEventListener('pointerdown', e => {
+  e.stopPropagation();
+  const b = e.target.closest('button[data-b]');
+  if (b && !b.disabled) requestBuild(b.dataset.b);
+});
+
+// ---- Victory / defeat banner ----
+function showBanner(text, sub, color) {
+  bannerShown = true;
+  const el = document.getElementById('banner');
+  document.getElementById('bannerText').textContent = text;
+  document.getElementById('bannerText').style.color = color;
+  document.getElementById('bannerSub').textContent = sub;
+  el.classList.add('show');
+}
+document.getElementById('bannerAgain').addEventListener('click', () => {
+  document.getElementById('banner').classList.remove('show');
+  startBattle(NET ? sim.mode : gameMode);
+});
+document.getElementById('bannerMenu').addEventListener('click', () => { document.getElementById('banner').classList.remove('show'); SFX.ui(); showTitle(); });
+
+// ---- Tutorial: a guided first battle. Each step waits for you to do the thing. ----
+const tutEl = document.getElementById('tut');
+let tut = null; // { i, seen: {eventType: true} }
+const TUT_STEPS = [
+  { msg: 'Welcome to <b>Amann Assault</b>. Your ships are <b>blue</b>, the enemy is red. You juggle a whole wing at once — let\'s learn the moves.', next: true },
+  { msg: '<b>Select a ship:</b> click (or tap) one of your blue ships, or press <b>1</b>.', done: () => selected >= 0, wait: 'select a ship' },
+  { msg: '<b>Send it somewhere:</b> with a ship selected, click anywhere on the map. It turns toward that spot at its own turn rate — big ships swing wide.', done: () => tut.seen.ordered, wait: 'click the map' },
+  { msg: '<b>Steer directly:</b> press and drag a ship, then let go to fling it that way.', done: () => tut.seen.dragRelease, wait: 'drag a ship' },
+  { msg: 'Each ship has a <b>firing cone</b>. Guns lock the first enemy to enter it. Entering through the <b style="color:#5fd08a">green</b> middle allows a full lock (accurate, leading, faster fire); <b style="color:#e8c34a">yellow</b> less; <b style="color:#e85a4a">red</b> edges the least. Fly so enemies cross your nose.', next: true },
+  { msg: '<b>Retarget:</b> press <b>T</b> (or the RETARGET button) to drop the current lock — the next enemy into the cone becomes the target. Watch for the bracket and beep.', done: () => tut.seen.refocus, wait: 'press T' },
+  { msg: '<b>Dodge:</b> press <b>Space</b> (or DODGE). The ship barrel-rolls in a straight line — costs energy, can\'t turn for a moment after.', done: () => tut.seen.dodge, wait: 'press Space' },
+  { msg: 'Ships you leave alone <b>slow down and stall</b> — a pulsing red ring means one needs you. Keep giving orders: that\'s the juggle. The AI only acts as fast as you do (APM, top left).', next: true },
+  { msg: 'Your <b>Grayzer</b> (the big ship) has a turret on each side and a <b style="color:#5adcff">battery</b>: friendly ships near it recharge (cyan beam). Watch its weak points — knocking out the bridge cripples its turrets.', next: true },
+  { msg: '<b>Camera:</b> press <b>C</b> (or the buttons top right) to try Snap and Bubble.', done: () => camMode !== 'fit', wait: 'press C' },
+  { msg: '<b>Now win:</b> destroy both enemy ships. Use everything you just learned.', done: () => sim.aliveCount(1) === 0, wait: 'destroy the enemies' },
+  { msg: '<b>Tutorial complete!</b> Try a Skirmish, or <b>Destroy the Carrier</b>: build ships with Q W E A S D from your carrier, salvage wrecks for money, and kill the enemy carrier.', finish: true },
+];
+function startTutorial() { tut = { i: 0, seen: {} }; showTutStep(); }
+function stopTutorial() { tut = null; tutEl.classList.remove('show'); }
+function showTutStep() {
+  const st = TUT_STEPS[tut.i];
+  tutEl.classList.add('show');
+  document.getElementById('tutStep').textContent = 'TUTORIAL · ' + (tut.i + 1) + ' / ' + TUT_STEPS.length;
+  document.getElementById('tutMsg').innerHTML = st.msg;
+  document.getElementById('tutWait').textContent = st.wait ? 'Waiting: ' + st.wait : '';
+  const next = document.getElementById('tutNext');
+  next.style.display = st.next || st.finish ? '' : 'none';
+  next.textContent = st.finish ? 'Main menu' : 'Next ▶';
+  document.getElementById('tutSkip').style.display = st.finish ? 'none' : '';
+}
+function tutAdvance() {
+  if (!tut) return;
+  if (TUT_STEPS[tut.i].finish) { stopTutorial(); showTitle(); return; }
+  tut.i++; tut.seen = {};
+  SFX.select();
+  showTutStep();
+}
+function tutTick() {
+  if (!tut) return;
+  const st = TUT_STEPS[tut.i];
+  if (st.done && st.done()) tutAdvance();
+}
+function tutEvent(type) { if (tut) tut.seen[type] = true; }
+document.getElementById('tutNext').addEventListener('click', e => { e.stopPropagation(); SFX.ui(); tutAdvance(); });
+document.getElementById('tutSkip').addEventListener('click', e => { e.stopPropagation(); SFX.ui(); stopTutorial(); showTitle(); });
+tutEl.addEventListener('pointerdown', e => e.stopPropagation());
 function openGarage() {
   SFX.unlock(); SFX.ui();
   titleEl.classList.remove('show'); garageEl.classList.add('show');
@@ -1033,8 +1341,18 @@ volIn.addEventListener('input', e => { SFX.unlock(); SFX.setVolume(parseFloat(e.
 volIn.addEventListener('change', () => SFX.ui());
 muteBtn.addEventListener('click', () => { SFX.unlock(); SFX.setMuted(!SFX.muted); syncSound(); SFX.ui(); });
 syncSound();
-document.getElementById('btnPlay').textContent = NET ? 'JOIN BATTLE' : 'BATTLE';
-document.getElementById('btnPlay').addEventListener('click', startBattle);
+if (NET) {
+  document.getElementById('btnPlay').textContent = 'JOIN BATTLE';
+  document.getElementById('btnCarrier').textContent = 'NEW: DESTROY THE CARRIER (everyone)';
+  document.getElementById('btnTutorial').textContent = 'NEW: SKIRMISH (everyone)';
+  document.getElementById('btnPlay').addEventListener('click', () => startBattle());
+  document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
+  document.getElementById('btnTutorial').addEventListener('click', () => startBattle('skirmish'));
+} else {
+  document.getElementById('btnPlay').addEventListener('click', () => startBattle('skirmish'));
+  document.getElementById('btnCarrier').addEventListener('click', () => startBattle('carrier'));
+  document.getElementById('btnTutorial').addEventListener('click', () => startBattle('tutorial'));
+}
 document.getElementById('btnGarage').addEventListener('click', openGarage);
 document.getElementById('garageBack').addEventListener('click', () => { SFX.ui(); showTitle(); });
 document.getElementById('menuBtn').addEventListener('click', e => { e.stopPropagation(); SFX.ui(); showTitle(); });

@@ -1,10 +1,18 @@
-// RADIANT WARFRONT — prototype 02: combat on top of the juggle.
+// AMANN ASSAULT (Radiant Warfront prototype 02): combat on top of the juggle.
 // Extends 01's momentum/crystallize core with the shared class table, firing
 // cones, target-gated cooldowns, AoE projectiles, lock-scaled spread, dodge,
 // and one energy pool per ship (= health + ammo + boost).
 // Pure sim. No DOM. Fixed tick, one seeded RNG stream, semantic commands only.
 // Update gating (Active/Reduced/Dormant) and projectile pooling are first-class
 // here — step 3's hardening lives in this sim and is benchmarked from 03/.
+//
+// Guns: every gun is an object with its own aim, target, lock and reload. A
+// fixed-gun ship's one gun IS the ship (its gunAngle/targetId/lockQ… fields),
+// riding the hull. The Grayzer carries two side turrets, each confined to a
+// 90-degree sector on its own side of the hull.
+//
+// Modes: 'skirmish' (fixed 6v6) and 'carrier' (Destroy the Carrier: each side
+// has a carrier that builds ships with money earned per second plus salvage).
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.CombatSim = factory();
@@ -53,6 +61,13 @@
     spawnDist:       { value: 330,   min: 100, max: 1000, tooltip: 'How far from the centre each team starts. Further = the fight builds up instead of opening point-blank. Reset to apply.' },
     ventLeak:        { value: 3,     min: 0,   max: 20,   tooltip: 'Energy/sec a capital bleeds per breached reactor vent.' },
     engineCripple:   { value: 0.5,   min: 0.1, max: 1,    tooltip: 'Speed and turn multiplier once a capital loses its engines.' },
+    hangarCripple:   { value: 0.5,   min: 0.1, max: 1,    tooltip: 'Carrier hangar knocked out: build speed multiplier.' },
+    batteryScale:    { value: 1.0,   min: 0,   max: 3,    tooltip: 'Multiplies the Grayzer battery: its capacity, recharge and the energy it pours into friendly ships.' },
+    incomePerSec:    { value: 8,     min: 0,   max: 50,   tooltip: 'Destroy the Carrier: money each side earns per second while its carrier lives.' },
+    startMoney:      { value: 250,   min: 0,   max: 2000, tooltip: 'Destroy the Carrier: money each side starts with.' },
+    salvageFrac:     { value: 0.4,   min: 0,   max: 1,    tooltip: 'Destroy the Carrier: a wreck is worth this fraction of the dead ship\'s cost. Any ship that flies over it collects it.' },
+    wreckSec:        { value: 45,    min: 5,   max: 300,  tooltip: 'Seconds a wreck stays before drifting off.' },
+    maxShips:        { value: 16,    min: 4,   max: 60,   tooltip: 'Destroy the Carrier: most ships a side may have at once (carrier and Grayzer included).' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
@@ -65,44 +80,64 @@
   // Unity port: one ScriptableObject per row; numbers become [Range] fields there.
   // turnRadius: world units. Ships can never turn tighter than this — angular
   // rate = current speed / turnRadius — so bigger, slower hulls swing wider.
-  // turret: only capital ships carry a rotating turret. Everything else has
-  // fixed forward guns — the cone points where the hull points, so to shoot
-  // something you have to fly at it. gunTurn is only read when turret is true.
+  // turret: carries turrets (`turrets` lists each mount: hull angle, how far it
+  // may swing either side of that angle, and its spot on the hull). Everything
+  // else has one fixed forward gun — the cone points where the hull points.
   // size: collision radius multiplier on unitRadius.
+  // cost / buildTime: what a carrier pays and how long it takes to build one.
   const CLASSES = {
-    fighter:     { speed: 150, turnRadius: 110, energyMax: 100, turret: false, gunTurn: 0, size: 1,
+    fighter:     { speed: 150, turnRadius: 110, energyMax: 100, turret: false, gunTurn: 0, size: 1, cost: 100, buildTime: 6,
                    coneHalf: 0.65, coneRange: 230, cooldown: 0.167, shotCost: 0.67, damage: 7.2,  aoe: 26, projSpeed: 198, projTtl: 1.51 },
-    bomber:      { speed: 100, turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+    bomber:      { speed: 100, turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1, cost: 150, buildTime: 9,
                    coneHalf: 0.80, coneRange: 270, cooldown: 0.533, shotCost: 2.0, damage: 26.3, aoe: 72, projSpeed: 108, projTtl: 3.25 },
-    heavy:       { speed: 112, turnRadius: 160, energyMax: 125, turret: false, gunTurn: 0, size: 1,
+    heavy:       { speed: 112, turnRadius: 160, energyMax: 125, turret: false, gunTurn: 0, size: 1, cost: 150, buildTime: 9,
                    coneHalf: 0.45, coneRange: 320, cooldown: 0.267, shotCost: 1.33, damage: 14, aoe: 18, projSpeed: 258, projTtl: 1.61 },
-    interceptor: { speed: 215, turnRadius: 90, energyMax: 58,  turret: false, gunTurn: 0, size: 1,
+    interceptor: { speed: 215, turnRadius: 90, energyMax: 58,  turret: false, gunTurn: 0, size: 1, cost: 80, buildTime: 5,
                    coneHalf: 0.70, coneRange: 180, cooldown: 0.117, shotCost: 0.5, damage: 5.1,  aoe: 16, projSpeed: 222, projTtl: 1.05 },
-    aaa:         { speed: 70,  turnRadius: 120, energyMax: 105, turret: false, gunTurn: 0, size: 1,
+    aaa:         { speed: 70,  turnRadius: 120, energyMax: 105, turret: false, gunTurn: 0, size: 1, cost: 120, buildTime: 7,
                    coneHalf: 1.40, coneRange: 210, cooldown: 0.1, shotCost: 0.4, damage: 4.25,  aoe: 36, projSpeed: 156, projTtl: 1.75 },
     // Torpedo bomber: capital killer. Slow, heavy shots that small ships can
     // sidestep but a lumbering capital can't. vsCapital multiplies damage on
     // capitals; projTtl lets the slow torpedo actually reach its range.
-    torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1,
+    torpedo:     { speed: 90,  turnRadius: 150, energyMax: 116, turret: false, gunTurn: 0, size: 1, cost: 160, buildTime: 10,
                    coneHalf: 0.55, coneRange: 300, cooldown: 1.6, shotCost: 4.67, damage: 38.8, aoe: 28, projSpeed: 105, projTtl: 3.71,
                    vsCapital: 4.0 },
-    // Capital: slow, huge pool, the only turret in the fleet. Stats are placeholders.
+    // Capital (the Grayzer, the player's dropship; one per side). Two side
+    // turrets, each confined to a 90-degree sector (traverse = 45 deg either side
+    // of straight out). Battery: recharges friendly ships' energy in range.
     // weakPoints: spots on the hull in hull-local units of the ship's radius
     // (+x = nose). A blast landing on one does weakCritMult damage and wears
     // it down; knocked out, it costs the ship something:
-    //   bridge -> turret fire control damaged (slow traverse, sloppy lock)
-    //   engine -> speed/turn crippled
-    //   vent   -> hull bleeds energy (ventLeak)
+    //   bridge -> turrets' fire control damaged (slow traverse, sloppy lock)
+    //   engine -> speed/turn crippled      vent -> hull bleeds energy (ventLeak)
     // Different capital types are just different rows with different layouts.
     capital:     { speed: 45,  turnRadius: 200, energyMax: 678, turret: true,  gunTurn: 3.0, size: 2.2,
-                   coneHalf: 0.3, coneRange: 400, cooldown: 0.3, shotCost: 1.33, damage: 16.6, aoe: 30, projSpeed: 180, projTtl: 2.9,
+                   coneHalf: 0.3, coneRange: 400, cooldown: 0.9, shotCost: 1.33, damage: 16.6, aoe: 30, projSpeed: 180, projTtl: 2.9,
+                   turrets: [
+                     { mount:  Math.PI / 2, traverse: Math.PI / 4, ox: -0.05, oy:  0.6 },
+                     { mount: -Math.PI / 2, traverse: Math.PI / 4, ox: -0.05, oy: -0.6 },
+                   ],
+                   battery: { max: 300, recharge: 5, range: 200, rate: 15 },
                    weakPoints: [
                      { type: 'bridge', x: 1.05,  y: 0,     r: 0.4 },
                      { type: 'engine', x: -1.0,  y: 0,     r: 0.45 },
                      { type: 'vent',   x: -0.1,  y: 0.75,  r: 0.35 },
                      { type: 'vent',   x: -0.1,  y: -0.75, r: 0.35 },
                    ] },
+    // Carrier: the base in Destroy the Carrier. No guns; builds ships with the
+    // side's money. Never stalls. Losing it loses the game.
+    carrier:     { speed: 28,  turnRadius: 260, energyMax: 1600, turret: false, noGuns: true, noStall: true, gunTurn: 0, size: 3.2,
+                   coneHalf: 0, coneRange: 0, cooldown: 1, shotCost: 0, damage: 0, aoe: 0, projSpeed: 1, projTtl: 1,
+                   weakPoints: [
+                     { type: 'hangar', x: 0.55,  y: 0,     r: 0.35 },
+                     { type: 'engine', x: -1.0,  y: 0,     r: 0.4 },
+                     { type: 'vent',   x: -0.3,  y: 0.7,   r: 0.3 },
+                     { type: 'vent',   x: -0.3,  y: -0.7,  r: 0.3 },
+                   ] },
   };
+  const CLASS_LIST = Object.keys(CLASSES); // stable order: network class codes
+  const BUILDABLE = ['fighter', 'interceptor', 'heavy', 'bomber', 'aaa', 'torpedo'];
+  const isCapitalHull = cls => !!(CLASSES[cls].turret || CLASSES[cls].noGuns); // big ships: capital ordnance + weak points
 
   function mulberry32(seed) {
     let a = seed >>> 0;
@@ -125,7 +160,7 @@
   const PLAYER = 0, ENEMY = 1;
 
   // roster: array of {cls, team}. Default: mirror 6v6 — five fixed-gun ships
-  // (incl. a torpedo bomber) plus one turreted capital per side.
+  // (incl. a torpedo bomber) plus one Grayzer per side.
   function defaultRoster() {
     return [
       { cls: 'fighter', team: PLAYER }, { cls: 'bomber', team: PLAYER },
@@ -136,11 +171,22 @@
       { cls: 'capital', team: ENEMY }, { cls: 'torpedo', team: ENEMY },
     ];
   }
+  // Destroy the Carrier: carrier + Grayzer + a small starting wing per side.
+  function carrierRoster() {
+    const r = [];
+    for (const team of [PLAYER, ENEMY]) {
+      for (const cls of ['fighter', 'heavy', 'capital', 'fighter', 'carrier']) r.push({ cls: cls, team: team });
+    }
+    return r;
+  }
 
-  function Sim(seed, overrides, roster) {
+  // opts: { mode: 'skirmish' | 'carrier' }
+  function Sim(seed, overrides, roster, opts) {
     this.seed = seed >>> 0;
+    this.mode = (opts && opts.mode) || 'skirmish';
     this.T = {};
     for (const k in TUNABLES) this.T[k] = TUNABLES[k].value;
+    if (this.mode === 'carrier') { this.T.arenaRadius = 820; this.T.spawnDist = 430; }
     if (overrides) for (const k in overrides) {
       if (!(k in this.T)) throw new Error('unknown tunable: ' + k);
       this.T[k] = overrides[k];
@@ -161,6 +207,13 @@
     this.aiPick = [-1, -1];
     this.pending = [];
     this.events = [];
+    // Destroy the Carrier economy.
+    this.money = [0, 0];
+    this.queue = [[], []]; // per side: [{ cls, left }] — one builds at a time
+    this.wrecks = [];
+    this.winner = -1;
+    this.aiBuildIdx = [0, 0];
+    if (this.mode === 'carrier') this.money = [this.T.startMoney, this.T.startMoney];
 
     this.hazards = [];
     const inner = this.T.hazardBandInner, outer = this.T.arenaRadius - this.T.hazardRadiusMax;
@@ -182,7 +235,7 @@
     }
 
     // Teams spawn on opposite sides of the safe disc, already moving.
-    const list = roster || defaultRoster();
+    const list = roster || (this.mode === 'carrier' ? carrierRoster() : defaultRoster());
     this.units = [];
     let pIdx = 0, eIdx = 0;
     const perTeam = [list.filter(r => r.team === PLAYER).length, list.filter(r => r.team === ENEMY).length];
@@ -192,30 +245,11 @@
       const n = perTeam[r.team];
       const baseAng = r.team === PLAYER ? Math.PI : 0; // player west, enemy east
       const ang = baseAng + ((slot - (n - 1) / 2) * 0.35);
-      const cls = CLASSES[r.cls];
-      if (!cls) throw new Error('unknown class: ' + r.cls);
-      this.units.push({
-        id: i, cls: r.cls, team: r.team,
-        x: Math.cos(ang) * this.T.spawnDist, y: Math.sin(ang) * this.T.spawnDist,
-        heading: baseAng + Math.PI, // face across the arena
-        gunAngle: baseAng + Math.PI,
-        momentum: 1, stallTimer: 0, crystallizeTimer: 0,
-        goal: null, // heading a released ship is still turning toward (no snap turns)
-        decTick: -1 - i, // AI: tick of this ship's last re-aim (oldest goes next)
-        energy: cls.energyMax,
-        targetId: -1, outOfConeTime: 0, cooldown: cls.cooldown,
-        // Arc-entry lock: entryQ = how centred the target was when it entered
-        // the arc (1 = dead centre, 0 = edge), frozen at entry. lockCap is the
-        // ceiling that entry allows; lockQ climbs toward it while held in the arc.
-        entryQ: 0, lockCap: 0, lockQ: 0,
-        vx: 0, vy: 0,
-        enteredConeTick: new Array(list.length).fill(-1),
-        dodgeTimer: 0, lockoutTimer: 0,
-        beingShotTimer: 0, // set when damaged; drives the "being shot" attrition condition later
-        tier: 0, // 0 Active, 1 Reduced, 2 Dormant — update gating
-        state: ALIVE, held: false,
-        weak: (cls.weakPoints || []).map(w => ({ type: w.type, x: w.x, y: w.y, r: w.r, hp: this.T.weakHp, out: false })),
-      });
+      if (!CLASSES[r.cls]) throw new Error('unknown class: ' + r.cls);
+      // Carriers sit well behind their line.
+      const dist = this.T.spawnDist + (r.cls === 'carrier' ? 260 : 0);
+      const a = r.cls === 'carrier' ? baseAng : ang;
+      this._spawn(r.cls, r.team, Math.cos(a) * dist, Math.sin(a) * dist, baseAng + Math.PI);
     }
 
     // Projectile pool. Fixed-capacity free list; nothing allocates per shot.
@@ -226,6 +260,49 @@
     }
     this.poolStats = { fired: 0, dropped: 0 };
   }
+
+  function newGun(heading, mount, cooldown) {
+    return { gunAngle: heading + mount, targetId: -1, outOfConeTime: 0, cooldown: cooldown,
+             entryQ: 0, lockCap: 0, lockQ: 0, entered: Object.create(null) };
+  }
+
+  // Create a ship. Ships can be added mid-battle (carrier builds); ids are
+  // array indices and never reused.
+  Sim.prototype._spawn = function (clsName, team, x, y, heading) {
+    const cls = CLASSES[clsName], id = this.units.length;
+    const u = {
+      id: id, cls: clsName, team: team,
+      x: x, y: y, heading: heading,
+      momentum: 1, stallTimer: 0, crystallizeTimer: 0,
+      goal: null, // heading a released ship is still turning toward (no snap turns)
+      decTick: -1 - id, // AI: tick of this ship's last re-aim (oldest goes next)
+      energy: cls.energyMax,
+      // A fixed-gun ship's gun state lives on the ship itself.
+      // Arc-entry lock: entryQ = how centred the target was when it entered
+      // the arc (1 = dead centre, 0 = edge), frozen at entry. lockCap is the
+      // ceiling that entry allows; lockQ climbs toward it while held in the arc.
+      gunAngle: heading, targetId: -1, outOfConeTime: 0, cooldown: cls.cooldown,
+      entryQ: 0, lockCap: 0, lockQ: 0, entered: Object.create(null),
+      vx: 0, vy: 0,
+      dodgeTimer: 0, lockoutTimer: 0,
+      beingShotTimer: 0, // set when damaged; drives the "being shot" attrition condition later
+      tier: 0, // 0 Active, 1 Reduced, 2 Dormant — update gating
+      state: ALIVE, held: false,
+      weak: (cls.weakPoints || []).map(w => ({ type: w.type, x: w.x, y: w.y, r: w.r, hp: this.T.weakHp, out: false })),
+      battery: cls.battery ? cls.battery.max * this.T.batteryScale : 0,
+    };
+    // Guns: turrets carry their own state; a fixed-gun ship's one gun is itself.
+    if (cls.turrets) {
+      u.guns = cls.turrets.map(t => Object.assign(newGun(heading, t.mount, cls.cooldown), { mount: t.mount, traverse: t.traverse, ox: t.ox, oy: t.oy }));
+    } else if (cls.noGuns) {
+      u.guns = [];
+    } else {
+      u.mount = 0; u.traverse = 0; u.ox = 0; u.oy = 0;
+      u.guns = [u];
+    }
+    this.units.push(u);
+    return u;
+  };
 
   // Back-compat for single-player callers: heldUnit / aimAngle = blue's.
   Object.defineProperty(Sim.prototype, 'heldUnit', {
@@ -245,6 +322,11 @@
   // Commands carry an optional team (default 0 = blue). A side can only touch
   // its own ships, and only while a person is flying it.
   Sim.prototype.command = function (cmd) { this.pending.push(cmd); };
+
+  Sim.prototype._dropLock = function (g) {
+    g.targetId = -1; g.lockQ = 0; g.lockCap = 0; g.entryQ = 0; g.outOfConeTime = 0;
+    for (const k in g.entered) delete g.entered[k];
+  };
 
   Sim.prototype._applyCommands = function () {
     for (const cmd of this.pending) {
@@ -294,13 +376,15 @@
         this.events.push({ type: 'dodge', unit: u.id, tick: this.tick });
         this.actions[team].push(this.tick);
       } else if (cmd.type === 'refocus') {
-        // Drop the current lock so the first NEW cone entrant takes priority.
+        // Retarget: drop every gun's lock so the first NEW cone entrant takes priority.
         const u = this._actor(cmd, team);
         if (!u) continue;
-        u.targetId = -1; u.lockQ = 0; u.lockCap = 0; u.entryQ = 0; u.outOfConeTime = 0;
-        u.enteredConeTick.fill(-1);
-        this.events.push({ type: 'refocus', unit: u.id, tick: this.tick });
+        for (const g of u.guns) this._dropLock(g);
+        u.retargetTick = this.tick; // the next lock this ship takes is a retarget (cue)
+        this.events.push({ type: 'refocus', unit: u.id, team: team, tick: this.tick });
         this.actions[team].push(this.tick);
+      } else if (cmd.type === 'build') {
+        this._queueBuild(team, cmd.cls);
       }
     }
     this.pending.length = 0;
@@ -313,7 +397,9 @@
     const T = this.T, win = APM_WINDOW_SEC * T.tickRate, list = this.actions[team];
     while (list.length && list[0] <= this.tick - win) list.shift();
     const elapsed = Math.min(this.tick, win) / T.tickRate;
-    return (list.length + T.aiApmDefault * APM_PRIOR_SEC / 60) / ((elapsed + APM_PRIOR_SEC) / 60);
+    // The prior fades out as the window fills, so a full window is the true rate.
+    const prior = APM_PRIOR_SEC * Math.max(0, 1 - elapsed / APM_WINDOW_SEC);
+    return (list.length + T.aiApmDefault * prior / 60) / ((elapsed + prior) / 60 || 1);
   };
   // The APM an AI side is allowed: its human opponent's, times aiApmMatch.
   Sim.prototype.aiApm = function (team) {
@@ -328,6 +414,74 @@
     if (this.held[team] >= 0) return this.units[this.held[team]];
     const u = typeof cmd.unit === 'number' ? this.units[cmd.unit] : null;
     return u && u.team === team && u.state === ALIVE ? u : null;
+  };
+
+  // --- Destroy the Carrier: economy and building ---
+  Sim.prototype.carrierOf = function (team) {
+    for (const u of this.units) if (u.cls === 'carrier' && u.team === team && u.state === ALIVE) return u;
+    return null;
+  };
+  Sim.prototype.teamShips = function (team) {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && u.state === ALIVE) n++;
+    return n + this.queue[team].length;
+  };
+  Sim.prototype._queueBuild = function (team, clsName) {
+    if (this.mode !== 'carrier' || this.winner >= 0) return false;
+    if (BUILDABLE.indexOf(clsName) < 0) return false; // one Grayzer, one carrier: never built
+    const cls = CLASSES[clsName];
+    if (!this.carrierOf(team) || this.money[team] < cls.cost) return false;
+    if (this.teamShips(team) >= this.T.maxShips || this.queue[team].length >= 5) return false;
+    this.money[team] -= cls.cost;
+    this.queue[team].push({ cls: clsName, left: cls.buildTime });
+    this.events.push({ type: 'queued', team: team, cls: clsName, tick: this.tick });
+    return true;
+  };
+  Sim.prototype._economy = function (dt) {
+    const T = this.T;
+    for (let t = 0; t < 2; t++) {
+      const car = this.carrierOf(t);
+      if (!car) continue;
+      this.money[t] += T.incomePerSec * dt;
+      // AI builds a steady mix whenever it can afford the next ship.
+      if (!this.human[t] && this.queue[t].length === 0) {
+        const plan = ['fighter', 'heavy', 'torpedo', 'fighter', 'interceptor', 'bomber', 'aaa'];
+        if (this._queueBuild(t, plan[this.aiBuildIdx[t] % plan.length])) this.aiBuildIdx[t]++;
+      }
+      const job = this.queue[t][0];
+      if (!job) continue;
+      job.left -= dt * (this._weakFlag(car, 'hangar') ? T.hangarCripple : 1);
+      if (job.left <= 0) {
+        this.queue[t].shift();
+        const off = T.unitRadius * CLASSES.carrier.size * 1.4;
+        const u = this._spawn(job.cls, t, car.x + Math.cos(car.heading) * off, car.y + Math.sin(car.heading) * off, car.heading);
+        if (this.human[t]) u.goal = car.heading;
+        this.events.push({ type: 'built', unit: u.id, team: t, cls: job.cls, tick: this.tick });
+      }
+    }
+    // Wrecks: any ship flying over one salvages it for its side.
+    for (let i = this.wrecks.length - 1; i >= 0; i--) {
+      const w = this.wrecks[i];
+      w.ttl -= dt;
+      let taken = null;
+      for (const u of this.units) {
+        if (u.state !== ALIVE || CLASSES[u.cls].noGuns) continue;
+        if (Math.hypot(u.x - w.x, u.y - w.y) < T.unitRadius * CLASSES[u.cls].size + 14) { taken = u; break; }
+      }
+      if (taken) {
+        this.money[taken.team] += w.value;
+        this.events.push({ type: 'salvage', team: taken.team, unit: taken.id, value: w.value, x: w.x, y: w.y, tick: this.tick });
+        this.wrecks.splice(i, 1);
+      } else if (w.ttl <= 0) this.wrecks.splice(i, 1);
+    }
+    // Win: a side whose carrier is gone loses.
+    if (this.winner < 0) {
+      const alive = [!!this.carrierOf(0), !!this.carrierOf(1)];
+      if (!alive[0] || !alive[1]) {
+        this.winner = alive[0] ? 0 : (alive[1] ? 1 : 2);
+        this.events.push({ type: 'victory', team: this.winner, tick: this.tick });
+      }
+    }
   };
 
   Sim.prototype._kill = function (u, cause) {
@@ -345,29 +499,42 @@
     if (u.energy <= 0) { u.energy = 0; this._kill(u, cause); }
   };
 
-  Sim.prototype._inCone = function (u, v) {
-    const dx = v.x - u.x, dy = v.y - u.y;
-    const cls = CLASSES[u.cls];
+  // Where a gun sits in the world (turrets are offset on the hull).
+  Sim.prototype.gunPos = function (u, g) {
+    if (g === u || (!g.ox && !g.oy)) return { x: u.x, y: u.y };
+    const r = this.T.unitRadius * CLASSES[u.cls].size, c = Math.cos(u.heading), s = Math.sin(u.heading);
+    return { x: u.x + (g.ox * c - g.oy * s) * r, y: u.y + (g.ox * s + g.oy * c) * r };
+  };
+
+  // Is v inside gun g's firing cone (range + angle from the barrel)?
+  Sim.prototype._inCone = function (u, v, g) {
+    g = g || u;
+    const p = this.gunPos(u, g), cls = CLASSES[u.cls];
+    const dx = v.x - p.x, dy = v.y - p.y;
     if (dx * dx + dy * dy > cls.coneRange * cls.coneRange) return false;
-    return Math.abs(wrapAngle(Math.atan2(dy, dx) - u.gunAngle)) <= cls.coneHalf;
+    return Math.abs(wrapAngle(Math.atan2(dy, dx) - g.gunAngle)) <= cls.coneHalf;
   };
 
-  // Acquisition zone. Fixed guns can only acquire what is in the forward cone.
-  // A turret acquires anything in range, at any bearing, then slews onto it.
-  Sim.prototype._canAcquire = function (u, v) {
-    if (!CLASSES[u.cls].turret) return this._inCone(u, v);
-    const cls = CLASSES[u.cls];
-    const dx = v.x - u.x, dy = v.y - u.y;
-    return dx * dx + dy * dy <= cls.coneRange * cls.coneRange;
+  // Acquisition zone. A fixed gun can only acquire what is in its forward cone.
+  // A turret acquires anything in range within the sector it can swing through
+  // (plus its cone), then slews onto it.
+  Sim.prototype._canAcquire = function (u, v, g) {
+    g = g || u;
+    if (g === u) return this._inCone(u, v, g);
+    const p = this.gunPos(u, g), cls = CLASSES[u.cls];
+    const dx = v.x - p.x, dy = v.y - p.y;
+    if (dx * dx + dy * dy > cls.coneRange * cls.coneRange) return false;
+    return Math.abs(wrapAngle(Math.atan2(dy, dx) - (u.heading + g.mount))) <= g.traverse + cls.coneHalf;
   };
 
-  Sim.prototype._fireProjectile = function (u, angle) {
+  Sim.prototype._fireProjectile = function (u, angle, g) {
     const cls = CLASSES[u.cls];
     let p = null;
     for (const q of this.projectiles) if (!q.active) { p = q; break; }
     if (!p) { this.poolStats.dropped++; return; } // pool exhausted: drop, never allocate
+    const from = this.gunPos(u, g || u);
     p.active = true;
-    p.x = u.x; p.y = u.y;
+    p.x = from.x; p.y = from.y;
     p.vx = Math.cos(angle) * cls.projSpeed; p.vy = Math.sin(angle) * cls.projSpeed;
     p.owner = u.id; p.team = u.team;
     p.damage = cls.damage; p.aoe = cls.aoe;
@@ -408,7 +575,7 @@
       if (d < p.aoe + ur) {
         const falloff = 1 - Math.max(0, d - ur) / p.aoe;
         let dmg = p.damage * falloff;
-        if (CLASSES[u.cls].turret && p.vsCap) dmg *= p.vsCap; // anti-capital ordnance
+        if (isCapitalHull(u.cls) && p.vsCap) dmg *= p.vsCap; // anti-capital ordnance
         const w = this._weakHit(u, p.x, p.y);
         if (w) {
           dmg *= this.T.weakCritMult;
@@ -421,6 +588,105 @@
         }
         this._damage(u, dmg, 'shot');
       }
+    }
+  };
+
+  // One gun's turn: track cone entries, keep/acquire the first entrant, aim
+  // (leading the target as the lock improves), traverse, and fire.
+  Sim.prototype._gunnery = function (u, g, gi, cls, dt, bridgeOut) {
+    const T = this.T, isTurret = g !== u;
+    // Track cone entry ticks for first-to-enter priority.
+    for (const v of this.units) {
+      if (v.team === u.team || v.state !== ALIVE) { delete g.entered[v.id]; continue; }
+      const inZone = this._canAcquire(u, v, g);
+      if (inZone && g.entered[v.id] === undefined) g.entered[v.id] = this.tick;
+      if (!inZone) delete g.entered[v.id];
+    }
+    // Validate / acquire target. First to enter the cone wins and keeps priority.
+    let target = g.targetId >= 0 ? this.units[g.targetId] : null;
+    if (target && target.state !== ALIVE) { target = null; g.targetId = -1; g.lockQ = 0; }
+    if (target) {
+      if (this._canAcquire(u, target, g)) g.outOfConeTime = 0;
+      else {
+        g.outOfConeTime += dt;
+        if (g.outOfConeTime > T.coneGraceSec) { target = null; g.targetId = -1; g.lockQ = 0; g.outOfConeTime = 0; }
+      }
+    }
+    const pos = this.gunPos(u, g);
+    if (!target) {
+      let bestTick = Infinity, best = -1;
+      for (const id in g.entered) {
+        const et = g.entered[id];
+        if (et < bestTick || (et === bestTick && +id < best)) { bestTick = et; best = +id; }
+      }
+      if (best >= 0) {
+        target = this.units[best];
+        g.targetId = best; g.outOfConeTime = 0;
+        // Freeze entry quality: how far off the arc centre (or turret barrel) it came in.
+        const off = Math.abs(wrapAngle(Math.atan2(target.y - pos.y, target.x - pos.x) - g.gunAngle));
+        const worst = isTurret ? T.turretEntryArc : cls.coneHalf;
+        g.entryQ = 1 - Math.min(1, off / worst);
+        g.lockCap = T.lockEntryFloor + (1 - T.lockEntryFloor) * g.entryQ;
+        g.lockQ = g.lockCap * T.lockStartFrac;
+        const retarget = u.retargetTick !== undefined && this.tick - u.retargetTick < T.tickRate * 3;
+        if (retarget) u.retargetTick = undefined;
+        this.events.push({ type: 'locked', unit: u.id, gun: gi, target: best, entryQ: g.entryQ, retarget: retarget, tick: this.tick });
+      }
+    }
+    if (bridgeOut) g.lockCap = Math.min(g.lockCap, T.bridgeLockCap);
+
+    // Where to aim: straight at the target at zero lock, fully led at full lock.
+    let aimAngle = isTurret ? u.heading + g.mount : u.heading;
+    if (target) {
+      const dist = Math.hypot(target.x - pos.x, target.y - pos.y);
+      const lead = (dist / cls.projSpeed) * g.lockQ * T.leadMax;
+      aimAngle = Math.atan2(target.y + target.vy * lead - pos.y, target.x + target.vx * lead - pos.x);
+    }
+    // Turrets slew toward the aim point, never leaving their sector; a damaged
+    // bridge slows them. Fixed guns always point where the hull points.
+    if (isTurret) {
+      const centre = u.heading + g.mount;
+      const want = centre + Math.max(-g.traverse, Math.min(g.traverse, wrapAngle(aimAngle - centre)));
+      g.gunAngle = turnToward(g.gunAngle, want, cls.gunTurn * (bridgeOut ? T.bridgeTurn : 1) * dt);
+      const rel = wrapAngle(g.gunAngle - centre); // hull turning can't drag it out of its sector
+      if (Math.abs(rel) > g.traverse) g.gunAngle = centre + Math.sign(rel) * g.traverse;
+    } else {
+      g.gunAngle = u.heading;
+    }
+
+    if (target && this._inCone(u, target, g)) {
+      // Lock climbs toward the ceiling its entry earned — never past it.
+      g.lockQ = Math.min(g.lockCap, g.lockQ + g.lockCap * (1 - T.lockStartFrac) * dt / T.lockTimeFull);
+      // Cooldown only ticks with a valid target in the cone; a better lock reloads faster.
+      g.cooldown -= dt * (1 + T.fireRateBonus * g.lockQ);
+      if (g.cooldown <= 0 && u.energy > cls.energyMax * T.autoFireFloor + cls.shotCost) {
+        const spread = T.lockSpreadMax * (1 - g.lockQ);
+        // Fixed guns can only nudge the shot within their arc; turrets fire down the barrel.
+        const base = isTurret ? g.gunAngle
+          : g.gunAngle + Math.max(-cls.coneHalf, Math.min(cls.coneHalf, wrapAngle(aimAngle - g.gunAngle)));
+        const angle = base + (this.rng() * 2 - 1) * spread;
+        this._fireProjectile(u, angle, g);
+        u.energy -= cls.shotCost; // shooting spends the pool that is also your health
+        g.cooldown = cls.cooldown;
+        this.events.push({ type: 'fired', unit: u.id, gun: gi, target: g.targetId, spread: spread, lockQ: g.lockQ, tick: this.tick });
+      }
+    }
+  };
+
+  // Grayzer battery: recharges itself slowly and pours energy into friendly
+  // ships in range that are below full.
+  Sim.prototype._battery = function (u, cls, dt) {
+    const b = cls.battery, k = this.T.batteryScale;
+    u.battery = Math.min(b.max * k, u.battery + b.recharge * k * dt);
+    for (const v of this.units) {
+      if (u.battery <= 0) break;
+      if (v === u || v.team !== u.team || v.state !== ALIVE) continue;
+      const vmax = CLASSES[v.cls].energyMax;
+      if (v.energy >= vmax) continue;
+      if (Math.hypot(v.x - u.x, v.y - u.y) > b.range) continue;
+      const give = Math.min(b.rate * k * dt, vmax - v.energy, u.battery);
+      v.energy += give; u.battery -= give;
+      v.charging = this.tick;
     }
   };
 
@@ -464,6 +730,12 @@
         if (u.crystallizeTimer >= T.crystallizeSec) {
           u.state = CRYSTALLIZED;
           if (T.wreckCrystals) this.hazards.push({ x: u.x, y: u.y, r: T.unitRadius * 1.6, salvage: true });
+          // Destroy the Carrier: the wreck is worth salvaging.
+          const c = CLASSES[u.cls];
+          if (this.mode === 'carrier' && !c.noGuns) {
+            const value = Math.round((c.cost || 400) * T.salvageFrac);
+            if (value > 0) this.wrecks.push({ x: u.x, y: u.y, value: value, ttl: T.wreckSec });
+          }
           this.events.push({ type: 'crystallized', unit: u.id, tick: this.tick });
         }
         continue;
@@ -481,10 +753,12 @@
         if (vents) { this._damage(u, vents * T.ventLeak * dt, 'breach'); if (u.state !== ALIVE) continue; }
         if (this._weakFlag(u, 'engine')) cripple = T.engineCripple;
       }
+      if (cls.battery) this._battery(u, cls, dt);
 
       // --- Steering. Every source of turning is capped by the hull's turn rate:
       // current speed / turnRadius. No ship ever snaps to a new heading. ---
-      const curSpeed = (this.human[u.team] ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed) * cripple;
+      const juggles = this.human[u.team] && !cls.noStall; // carriers cruise steadily, never stall
+      const curSpeed = (juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed) * cripple;
       const maxTurn = curSpeed / (cls.turnRadius * T.turnRadiusScale) * (u.tier === 1 ? 2 : 1); // rad/s (Reduced tier steps half as often)
       const heading0 = u.heading;
       if (u.dodgeTimer > 0) {
@@ -495,12 +769,12 @@
         if (u.lockoutTimer <= 0) u.heading = turnToward(u.heading, this.aim[u.team], maxTurn * dt);
       } else if (this.human[u.team]) {
         // Unpossessed ship on a human-flown side: the juggle clock runs.
-        u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
+        if (juggles) u.momentum = Math.max(0, u.momentum - T.momentumDrain * dt);
         if (u.goal !== null && u.lockoutTimer <= 0) {
           u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
           if (Math.abs(wrapAngle(u.goal - u.heading)) < 1e-3) u.goal = null;
         }
-        u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
+        if (juggles) u.heading += (this.rng() * 2 - 1) * T.driftNoise * (1 - u.momentum) * dt;
       } else {
         // Opposition AI: same class table, seeks nearest player ship to gun range.
         // It only re-aims a ship when it spends an action on it (APM-matched,
@@ -508,13 +782,18 @@
         // and flies on, just like a released player ship.
         const decide = this.aiPick[u.team] === u.id;
         if (u.goal !== null) u.heading = turnToward(u.heading, u.goal, maxTurn * dt);
-        if (u.tier < 2 && decide) {
+        if (decide && cls.noGuns) {
+          // AI carrier: hold station behind its own line, circling.
+          const homeX = (u.team === PLAYER ? -1 : 1) * (T.spawnDist + 260);
+          const dx = homeX - u.x, dy = -u.y;
+          u.goal = Math.hypot(dx, dy) > 90 ? Math.atan2(dy, dx) : u.heading + Math.PI / 2;
+        } else if (u.tier < 2 && decide) {
           let tgt = null, tgtD = Infinity;
           const huntCapitals = !!cls.vsCapital;
           for (const v of this.units) {
             if (v.team === u.team || v.state !== ALIVE) continue;
-            // Anti-capital ships treat capitals as much closer than they are.
-            const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && CLASSES[v.cls].turret ? 0.25 : 1);
+            // Anti-capital ships treat capitals and carriers as much closer than they are.
+            const d = Math.hypot(v.x - u.x, v.y - u.y) * (huntCapitals && isCapitalHull(v.cls) ? 0.25 : 1);
             if (d < tgtD) { tgtD = d; tgt = v; }
           }
           if (tgt) tgtD = Math.hypot(tgt.x - u.x, tgt.y - u.y);
@@ -522,7 +801,7 @@
             const toTgt = Math.atan2(tgt.y - u.y, tgt.x - u.x);
             let want;
             if (cls.turret) {
-              // Turret ship: close to range, then orbit and let the turret work.
+              // Turret ship: close to range, then turn broadside so a side turret bears.
               want = tgtD > cls.coneRange * 0.7 ? toTgt : toTgt + Math.PI / 2;
             } else {
               // Fixed guns: strafing runs. Nose on target; peel off when too
@@ -551,7 +830,7 @@
         if (nearest) {
           const away = u.heading - (nearestRel >= 0 ? 1 : -1) * Math.PI / 2;
           const urgency = Math.min(1, 1.5 * (1 - Math.max(0, nearestGap) / look));
-          const str = this.human[u.team] ? u.momentum : 1;
+          const str = juggles ? u.momentum : 1;
           // Close call: evasion overrides whatever the pilot/AI was turning toward.
           const from = urgency > 0.6 ? heading0 : u.heading;
           u.heading = turnToward(from, away, maxTurn * T.avoidSteer * str * urgency * dt);
@@ -566,7 +845,7 @@
       }
 
       // --- Stall (human-flown sides only — the AI opposition does not juggle) ---
-      if (this.human[u.team] && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
+      if (juggles && u.momentum <= 0 && !u.held && u.dodgeTimer <= 0) {
         u.vx = 0; u.vy = 0;
         u.stallTimer += dt;
         if (u.stallTimer >= T.stallGraceSec) this._kill(u, 'stalled');
@@ -574,9 +853,7 @@
       }
 
       // --- Movement ---
-      let speed = this.human[u.team]
-        ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed)
-        : cls.speed;
+      let speed = juggles ? T.minSpeed + u.momentum * (cls.speed - T.minSpeed) : cls.speed;
       if (u.dodgeTimer > 0) speed = cls.speed * T.dodgeSpeedMult;
       speed *= cripple;
       u.vx = Math.cos(u.heading) * speed; u.vy = Math.sin(u.heading) * speed;
@@ -593,87 +870,12 @@
       }
       if (u.state !== ALIVE) continue;
 
-      if (!cls.turret) u.gunAngle = u.heading; // fixed guns ride the hull
+      if (u.guns[0] === u) u.gunAngle = u.heading; // fixed guns ride the hull
 
       // --- Gunnery. Reduced tier: every 2nd tick. Dormant: no acquisition at all. ---
       if (u.tier === 2 || (u.tier === 1 && (this.tick & 1) === 1)) continue;
-
-      // Track cone entry ticks for first-to-enter priority.
-      for (const v of this.units) {
-        if (v.team === u.team || v.state !== ALIVE) { u.enteredConeTick[v ? v.id : 0] = -1; continue; }
-        const inZone = this._canAcquire(u, v);
-        if (inZone && u.enteredConeTick[v.id] < 0) u.enteredConeTick[v.id] = this.tick;
-        if (!inZone) u.enteredConeTick[v.id] = -1;
-      }
-
-      // Validate / acquire target. First to enter the cone wins and keeps priority.
-      let target = u.targetId >= 0 ? this.units[u.targetId] : null;
-      if (target && (target.state !== ALIVE)) { target = null; u.targetId = -1; u.lockQ = 0; }
-      if (target) {
-        if (this._canAcquire(u, target)) { u.outOfConeTime = 0; }
-        else {
-          u.outOfConeTime += dt;
-          if (u.outOfConeTime > T.coneGraceSec) { target = null; u.targetId = -1; u.lockQ = 0; u.outOfConeTime = 0; }
-        }
-      }
-      if (!target) {
-        let bestTick = Infinity, best = -1;
-        for (const v of this.units) {
-          if (v.team === u.team || v.state !== ALIVE) continue;
-          const et = u.enteredConeTick[v.id];
-          if (et >= 0 && et < bestTick) { bestTick = et; best = v.id; }
-        }
-        if (best >= 0) {
-          target = this.units[best];
-          u.targetId = best; u.outOfConeTime = 0;
-          // Freeze entry quality: how far off the arc centre (or turret barrel) it came in.
-          const off = Math.abs(wrapAngle(Math.atan2(target.y - u.y, target.x - u.x) - u.gunAngle));
-          const worst = cls.turret ? T.turretEntryArc : cls.coneHalf;
-          u.entryQ = 1 - Math.min(1, off / worst);
-          u.lockCap = T.lockEntryFloor + (1 - T.lockEntryFloor) * u.entryQ;
-          u.lockQ = u.lockCap * T.lockStartFrac;
-          this.events.push({ type: 'locked', unit: u.id, target: best, entryQ: u.entryQ, tick: this.tick });
-        }
-      }
-
-      // Where to aim: straight at the target at zero lock, fully led at full lock.
-      let aimAngle = u.heading;
-      if (target) {
-        const dist = Math.hypot(target.x - u.x, target.y - u.y);
-        const lead = (dist / cls.projSpeed) * u.lockQ * T.leadMax;
-        aimAngle = Math.atan2(target.y + target.vy * lead - u.y, target.x + target.vx * lead - u.x);
-      }
-
-      // Turret (capitals only) rotates independently of the hull: toward target,
-      // else settles on heading. Fixed guns always point where the hull points.
-      // Bridge knocked out: fire control is damaged, not gone — the turret
-      // still fights, just slower to traverse and with a capped lock.
       const bridgeOut = cls.turret && this._weakFlag(u, 'bridge');
-      if (bridgeOut) u.lockCap = Math.min(u.lockCap, T.bridgeLockCap);
-      if (cls.turret) {
-        const gunGoal = target ? aimAngle : u.heading;
-        u.gunAngle = turnToward(u.gunAngle, gunGoal, cls.gunTurn * (bridgeOut ? T.bridgeTurn : 1) * dt);
-      } else {
-        u.gunAngle = u.heading;
-      }
-
-      if (target && this._inCone(u, target)) {
-        // Lock climbs toward the ceiling its entry earned — never past it.
-        u.lockQ = Math.min(u.lockCap, u.lockQ + u.lockCap * (1 - T.lockStartFrac) * dt / T.lockTimeFull);
-        // Cooldown only ticks with a valid target in the cone; a better lock reloads faster.
-        u.cooldown -= dt * (1 + T.fireRateBonus * u.lockQ);
-        if (u.cooldown <= 0 && u.energy > cls.energyMax * T.autoFireFloor + cls.shotCost) {
-          const spread = T.lockSpreadMax * (1 - u.lockQ);
-          // Fixed guns can only nudge the shot within their arc; turrets fire down the barrel.
-          let base = cls.turret ? u.gunAngle
-            : u.gunAngle + Math.max(-cls.coneHalf, Math.min(cls.coneHalf, wrapAngle(aimAngle - u.gunAngle)));
-          const angle = base + (this.rng() * 2 - 1) * spread;
-          this._fireProjectile(u, angle);
-          u.energy -= cls.shotCost; // shooting spends the pool that is also your health
-          u.cooldown = cls.cooldown;
-          this.events.push({ type: 'fired', unit: u.id, target: u.targetId, spread: spread, lockQ: u.lockQ, tick: this.tick });
-        }
-      }
+      for (let gi = 0; gi < u.guns.length; gi++) this._gunnery(u, u.guns[gi], gi, cls, dt, bridgeOut);
     }
 
     // --- Projectiles: move, contact-detonate on foes and crystals, flak at end of life. ---
@@ -697,6 +899,8 @@
       if (boom) this._detonate(p);
     }
 
+    if (this.mode === 'carrier') this._economy(dt);
+
     this.tick++;
   };
 
@@ -718,12 +922,17 @@
   const r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
   const STATE_CODE = { alive: 0, crystallizing: 1, crystallized: 2 };
   const CODE_STATE = ['alive', 'crystallizing', 'crystallized'];
+  const gunSnap = g => [r3(g.gunAngle), g.targetId, r3(g.lockQ), r3(g.lockCap), r3(g.entryQ)];
+  function gunApply(g, a) { g.gunAngle = a[0]; g.targetId = a[1]; g.lockQ = a[2]; g.lockCap = a[3]; g.entryQ = a[4]; }
   Sim.prototype.snapshot = function (events) {
     const units = this.units.map(u => [
       r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
       STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
       r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
       u.goal === null ? null : r3(u.goal),
+      CLASS_LIST.indexOf(u.cls), u.team,
+      u.guns[0] === u ? 0 : u.guns.map(gunSnap),
+      r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
     ]);
     const proj = [];
     for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0]);
@@ -734,17 +943,33 @@
       events: events || [],
       apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
       aiApm: [Math.round(this.aiApm(0)), Math.round(this.aiApm(1))],
+      mode: this.mode, money: this.money.map(Math.floor), winner: this.winner,
+      queue: this.queue.map(q => q.map(j => [j.cls, r2(j.left)])),
+      wrecks: this.wrecks.map(w => [r2(w.x), r2(w.y), w.value, r2(w.ttl)]),
     };
   };
   Sim.prototype.applySnapshot = function (snap) {
     this.tick = snap.tick; this.held = snap.held; this.aim = snap.aim; this.human = snap.human;
     snap.units.forEach((a, i) => {
-      const u = this.units[i];
-      if (!u) return;
+      let u = this.units[i];
+      const cls = CLASS_LIST[a[15]] || 'fighter', team = a[16] | 0;
+      if (!u) {
+        // A ship the server built after we joined: create it locally to render.
+        while (this.units.length < i) this._spawn('fighter', 0, 0, 0, 0).state = CRYSTALLIZED;
+        u = this._spawn(cls, team, a[0], a[1], a[2]);
+      } else if (a[15] !== undefined && (u.cls !== cls || u.team !== team)) {
+        // Out of step with the server (e.g. it switched game mode): rebuild this slot.
+        const fresh = this._spawn(cls, team, a[0], a[1], a[2]);
+        this.units.pop(); fresh.id = i; if (fresh.guns[0] === fresh) fresh.guns = [fresh];
+        this.units[i] = u = fresh;
+      }
       u.x = a[0]; u.y = a[1]; u.heading = a[2]; u.gunAngle = a[3]; u.momentum = a[4]; u.energy = a[5];
       u.state = CODE_STATE[a[6]]; u.held = !!a[7]; u.targetId = a[8]; u.lockQ = a[9]; u.lockCap = a[10];
       u.entryQ = a[11]; u.crystallizeTimer = a[12]; u.goal = a[14] === undefined ? null : a[14];
       a[13].forEach((hp, k) => { if (u.weak[k]) { u.weak[k].out = hp < 0; u.weak[k].hp = Math.max(0, hp); } });
+      if (Array.isArray(a[17])) a[17].forEach((ga, k) => { if (u.guns[k] && u.guns[k] !== u) gunApply(u.guns[k], ga); });
+      if (a[18] !== undefined) u.battery = a[18];
+      u.charging = a[19] ? snap.tick : -10;
     });
     let k = 0;
     for (const p of this.projectiles) {
@@ -755,15 +980,22 @@
     this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));
     this.events = snap.events;
     this._netApm = snap.apm; this._netAiApm = snap.aiApm;
+    if (snap.mode) this.mode = snap.mode;
+    if (snap.money) this.money = snap.money;
+    if (snap.winner !== undefined) this.winner = snap.winner;
+    if (snap.queue) this.queue = snap.queue.map(q => q.map(j => ({ cls: j[0], left: j[1] })));
+    if (snap.wrecks) this.wrecks = snap.wrecks.map(w => ({ x: w[0], y: w[1], value: w[2], ttl: w[3] }));
   };
 
   Sim.prototype.stateHash = function () {
     let h = 0x811c9dc5;
     const mix = str => { for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } };
-    mix('t' + this.tick + 'h' + this.held.join(',') + 'm' + this.human.join(',') + 'b' + this.aiBudget.map(b => b.toFixed(4)).join(','));
+    mix('t' + this.tick + 'h' + this.held.join(',') + 'm' + this.human.join(',') + 'b' + this.aiBudget.map(b => b.toFixed(4)).join(',') +
+        '$' + this.money.map(m => m.toFixed(2)).join(',') + 'w' + this.wrecks.length + 'q' + this.queue.map(q => q.length).join(','));
     for (const u of this.units) {
       mix(u.id + ':' + u.state + ':' + u.x.toFixed(3) + ',' + u.y.toFixed(3) + ',' + u.heading.toFixed(4) +
-          ',' + u.gunAngle.toFixed(4) + ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.targetId + ',' + u.lockQ.toFixed(4));
+          ',' + u.momentum.toFixed(4) + ',' + u.energy.toFixed(3) + ',' + u.battery.toFixed(3));
+      for (const g of u.guns) mix(g.gunAngle.toFixed(4) + ',' + g.targetId + ',' + g.lockQ.toFixed(4));
       for (const w of u.weak) mix(w.type + w.hp.toFixed(2));
       if (u.goal !== null) mix('g' + u.goal.toFixed(4));
     }
@@ -773,5 +1005,6 @@
     return (h >>> 0).toString(16);
   };
 
-  return { Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
+  return { Sim: Sim, TUNABLES: TUNABLES, CLASSES: CLASSES, CLASS_LIST: CLASS_LIST, BUILDABLE: BUILDABLE,
+           mulberry32: mulberry32, PLAYER: PLAYER, ENEMY: ENEMY };
 });
