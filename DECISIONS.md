@@ -342,6 +342,8 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Yellow = need help soon** (low battery, stranded, pinned down). **Red = about to
   die** (hull failing, hangar on fire, re-entry gone wrong). The difference is
   urgency only.
+- **Over-budget rescuers are still shown,** marked "over budget". The player in need
+  can still pick one (e.g. the only one close enough) and pays the difference.
 - **No sure-fire REP:** answering an alert never grants REP by itself; REP comes
   from how the job actually goes (delivered, on time, terms kept).
 - Ties to: evac dropships (decision 26), escrow and contracts (27), REP.
