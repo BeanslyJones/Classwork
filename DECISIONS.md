@@ -251,6 +251,14 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   happens once per fleet instead of per ship; ~85 players / ~340 ships per tracker
   is a natural load unit. Fleet-vs-fleet fights and big brawls still run in the
   battle cells; a crashed tracker recovers from the recovery stream.
+  - **Engagements merge trackers (owner's idea):** when two fleets get close, one
+    tracker hands its fleet over and stops; the other centres itself between them
+    and runs the whole fight in one place (no per-tick cross-machine exchange).
+    More fleets joining merge in too; when they separate it splits back. Merge
+    within weapon range + margin, split only once well apart for a few seconds
+    (no flapping); the larger fleet's tracker survives (lower id on a tie); merges
+    happen at tick boundaries; an engagement too big for one machine falls back to
+    space cells or time slowdown.
 - **Either way:** binary, changes-only, visibility-filtered updates (max zoom bounds
   what each player needs); shots sent once (deterministic flight), only guided
   ordnance updated; overhead layer (aircraft, artillery arcs, large missiles, lasers)
