@@ -290,7 +290,14 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   kinds and depend on what's equipped (part of the loadout, like 06's builder and
   decision 10's rolled parts).
 - **Hangar bays:** large ships can have hangars and recall their wings inside when
-  needed (details open: capacity, recharge while docked, relaunch).
+  needed (details open: capacity, recharge while docked).
+  - Docked ships can launch **at any time**, even at dangerous moments (e.g. during
+    re-entry), and see their cap ship's health and their hangar doors' state
+    (doors can be damaged).
+  - The cap pilot can order an **emergency evac**: everyone is thrown out,
+    damaged / scattered / low on battery, but alive.
+  - If the cap ship is destroyed with ships still inside and no evac or launch in
+    time, they are lost with it (a mix of: lost, emergency launch, escape window).
 - **Cap ship boost (where a cap ship has one):** the wing gets an audio + visual
   cue ("boost in 3…") so they can boost with it. Ships left outside the leash area
   (pulled offscreen) get a few seconds, then are steered back toward the centre.
