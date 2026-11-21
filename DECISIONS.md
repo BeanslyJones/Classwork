@@ -329,3 +329,14 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Ties to: REP (breaking terms costs REP), defection rules (decision 26), the
   mercenary economy, leaders reshuffling wings (a reassignment may need the
   contract to allow it).
+
+## 28. Finding work and rescue alerts (concept — to refine)
+- **Hiring:** all three ways — a job board (leaders post, mercenaries apply), direct
+  offers (leaders browse mercenaries by REP and ship size), and quick-hire to fill
+  an empty slot right before a battle. All lead into decision 27's negotiation.
+- **Yellow / red alerts:** a player in trouble raises an alert with a preset
+  **maximum bid** that rescuers cannot see. Rescuers see the request (amount
+  hidden) and enter their **lowest price** (a blind reverse auction). The player
+  in need sees every available rescuer's info (REP, ship, distance / ETA, price)
+  and picks one. Exact meaning of yellow vs red still to decide.
+- Ties to: evac dropships (decision 26), escrow and contracts (27), REP.
