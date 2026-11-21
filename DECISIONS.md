@@ -423,5 +423,12 @@ source of truth (no cheating, no drift).
 6. **Slower updates for far / overhead things** (aircraft, artillery, big missiles).
 7. **Hidden stays hidden:** dormant enemy torpedoes and out-of-view ships are never
    sent (today they're only hidden on screen).
+**At boundaries between helpers / servers:** a neighbour holds a border ship's plan
+(not per-tick copies), so border traffic shrinks too, and hand-off is plan + state.
+Rules: plan changes take effect on a future tick (e.g. now + 2) so every helper and
+browser switches on the same tick; plans carry a sequence number (old ones ignored);
+automatic course changes (leash-edge turn-back, AI re-aim, target lost) are turned
+into explicit plan changes by the owning helper; plan changes and hand-offs happen
+only at tick boundaries; browsers' small drift is fixed by the full refresh.
 Estimate: 10–50× less data in big battles (to measure on the load page). Works the
 same with or without NATS; NATS spreads the server's work, this shrinks the data.
