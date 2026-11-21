@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server Load</title>
+<style>
+  /* One dark instrument-panel look: the server's CPU split by part, live. */
+  :root { --bg: #0b0e14; --panel: #121825; --line: #263248; --fg: #dbe3ee; --muted: #8494ad; --ok: #4ade80; --warn: #facc15; --bad: #ff6b5a;
+          color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 18px max(16px, env(safe-area-inset-left, 0px)) 40px; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .06em; }
+  .pill { font-weight: 700; padding: 5px 12px; border-radius: 99px; font-size: 13px; }
+  .pill.ok { background: #10251a; color: var(--ok); } .pill.warn { background: #2a2410; color: var(--warn); } .pill.bad { background: #2c1210; color: var(--bad); }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .stats b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 14px; min-width: 0; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .bar { position: relative; height: 34px; border-radius: 8px; background: #1a2232; overflow: hidden; display: flex; }
+  .bar span { height: 100%; transition: width .3s; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-top: 10px; }
+  td, th { padding: 5px 6px; text-align: right; border-bottom: 1px solid #1c2433; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td:first-child, th:first-child { text-align: left; }
+  td i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; }
+  tr.hot td { color: #fff; font-weight: 700; }
+  tr.hot td:first-child::after { content: '  ← busiest'; color: var(--bad); font-weight: 600; }
+  canvas { width: 100%; height: 220px; display: block; }
+  .big { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controls button { background: #1b2434; color: var(--fg); border: 1px solid #34425c; border-radius: 8px; padding: 8px 12px; font: 600 13px system-ui; cursor: pointer; }
+  .controls button:hover { border-color: #6aa5ff; }
+  .controls button:focus-visible { outline: 2px solid #6aa5ff; outline-offset: 2px; }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>SERVER LOAD</h1>
+      <div class="stats" id="stats">Waiting for the server…</div>
+    </div>
+    <span class="pill warn" id="status">CONNECTING</span>
+  </header>
+
+  <div class="card">
+    <h2>Where one CPU core's time goes</h2>
+    <div class="bar" id="bar"></div>
+    <div class="scale"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100% of one core</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Part</th><th>% of a core</th><th>ms per tick</th><th>share</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Last 60 seconds</h2>
+    <canvas id="chart" width="1000" height="220" aria-label="Stacked history of CPU use by part, with the 100% line"></canvas>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Battle tick</h2>
+      <div class="big" id="tick">–</div>
+      <div class="sub" id="tickSub"></div>
+    </div>
+    <div class="card">
+      <h2>Network</h2>
+      <div class="big" id="net">–</div>
+      <div class="sub" id="netSub"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Stress it</h2>
+    <div class="controls">
+      <span class="sub">Start for everyone:</span>
+      <button data-count="50">100 ships</button><button data-count="150">300 ships</button>
+      <button data-count="300">600 ships</button><button data-count="500">1000 ships</button>
+      <button data-mode="skirmish">Normal battle</button>
+      <span class="sub" style="margin-left:10px">Speed:</span>
+      <button data-speed="0.5">½×</button><button data-speed="1">1×</button><button data-speed="2">2×</button>
+    </div>
+    <p class="sub">Everything here is one Node process on one core, so 100% means that core is full and the battle starts falling behind.
+      Keep a game screen open too if you want to see the network side.</p>
+  </div>
+</div>
+<script>
+'use strict';
+const PARTS = [
+  ['commands', 'Player input', '#8ea3c4'], ['ai', 'Enemy AI', '#b48cff'], ['grid', 'Spatial grid', '#5ad8ff'],
+  ['think', 'Ship thinking', '#4f8cff'], ['resolve', 'Shots fired', '#ffb43c'], ['missiles', 'Missiles + lock game', '#ff7ab8'],
+  ['damage', 'Deaths + energy', '#e0c068'], ['projectiles', 'Projectiles + hits', '#ff8f3c'], ['upkeep', 'Reinforcements, fleets, economy', '#9be15d'],
+  ['weather', 'Weather', '#3fd0a0'], ['snapshot', 'Building snapshots', '#c9d2de'], ['sending', 'Sending to screens', '#ff5a4f'],
+];
+const hist = []; // { pct: {part: %}, total }
+const $ = id => document.getElementById(id);
+
+function render(p) {
+  const win = Math.max(0.05, p.windowSec || 0.5) * 1000, ticks = Math.max(1, p.ticksPerSec * (p.windowSec || 0.5));
+  const pct = {}; let total = 0;
+  for (const [k] of PARTS) { pct[k] = ((p.cpu && p.cpu[k]) || 0) / win * 100; total += pct[k]; }
+  hist.push({ pct: pct, total: total }); if (hist.length > 120) hist.shift();
+
+  const hot = PARTS.reduce((a, b) => (pct[b[0]] > pct[a[0]] ? b : a))[0];
+  $('bar').innerHTML = PARTS.map(([k, , c]) => '<span title="' + k + '" style="width:' + Math.min(100, pct[k]).toFixed(2) + '%;background:' + c + '"></span>').join('');
+  $('rows').innerHTML = PARTS.map(([k, name, c]) => '<tr' + (k === hot && pct[k] > 1 ? ' class="hot"' : '') + '><td><i style="background:' + c + '"></i>' + name + '</td><td>' +
+    pct[k].toFixed(1) + '%</td><td>' + (((p.cpu && p.cpu[k]) || 0) / ticks).toFixed(2) + '</td><td>' + (total ? (pct[k] / total * 100).toFixed(0) : 0) + '%</td></tr>').join('') +
+    '<tr><td><b>Total</b></td><td><b>' + total.toFixed(1) + '%</b></td><td></td><td></td></tr>';
+
+  const st = $('status');
+  st.className = 'pill ' + (p.behind || total > 90 ? 'bad' : total > 60 ? 'warn' : 'ok');
+  st.textContent = p.behind ? 'FALLING BEHIND' : total > 90 ? 'NEARLY FULL' : total > 60 ? 'BUSY' : 'KEEPING UP';
+  $('stats').innerHTML = '<span>mode <b>' + (p.mode || '?') + '</b></span><span>ships <b>' + p.alive + '/' + p.ships + '</b></span><span>shots in flight <b>' +
+    (p.projectiles || 0) + '</b></span><span>screens <b>' + p.screens + '</b></span><span>memory <b>' + p.mem + ' MB</b></span>';
+  $('tick').textContent = p.stepMs + ' ms';
+  $('tickSub').textContent = 'average battle tick (budget ' + p.budgetMs + ' ms) · worst ' + p.stepMax + ' ms · ' + p.ticksPerSec + ' ticks/s · loop ran up to ' + p.lagMax + ' ms late';
+  $('net').textContent = (p.perScreenKBs || 0) + ' KB/s';
+  $('netSub').textContent = 'to the busiest screen · total ' + (p.outKBs || 0) + ' KB/s · snapshot ' + p.snapKB + ' KB × ' + p.snapHz + '/s · home Wi-Fi gets shaky past ~2,500 KB/s per screen';
+  drawChart();
+}
+
+function drawChart() {
+  const cv = $('chart'), g = cv.getContext('2d'), W = cv.width, H = cv.height, n = 120;
+  const max = Math.max(110, ...hist.map(h => h.total * 1.1));
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#1a2232'; g.fillRect(0, 0, W, H);
+  const x = i => (i + n - hist.length) / (n - 1) * W, y = v => H - v / max * H;
+  for (let pi = PARTS.length - 1; pi >= 0; pi--) { // stacked: draw cumulative tops from the top part down
+    g.beginPath();
+    hist.forEach((h, i) => { let cum = 0; for (let k = 0; k <= pi; k++) cum += h.pct[PARTS[k][0]]; g[i ? 'lineTo' : 'moveTo'](x(i), y(cum)); });
+    g.lineTo(x(hist.length - 1), H); g.lineTo(x(0), H); g.closePath();
+    g.fillStyle = PARTS[pi][2]; g.fill();
+  }
+  g.strokeStyle = '#ff6b5a'; g.setLineDash([8, 6]); g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, y(100)); g.lineTo(W, y(100)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#ff6b5a'; g.font = '600 14px system-ui'; g.fillText('100% of one core', 8, y(100) - 6);
+}
+
+const es = new EventSource('/perf-events');
+es.addEventListener('perf', e => render(JSON.parse(e.data)));
+es.onerror = () => { $('status').className = 'pill bad'; $('status').textContent = 'NO CONNECTION'; };
+const send = cmd => fetch('/perf-cmd', { method: 'POST', body: JSON.stringify(cmd) }).catch(() => {});
+for (const b of document.querySelectorAll('.controls button')) b.addEventListener('click', () => {
+  if (b.dataset.count) send({ type: 'restart', mode: 'stress', count: +b.dataset.count });
+  else if (b.dataset.mode) send({ type: 'restart', mode: b.dataset.mode });
+  else send({ type: 'speed', value: +b.dataset.speed });
+});
+</script>
+</body>
+</html>

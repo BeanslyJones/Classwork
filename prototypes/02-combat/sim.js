@@ -288,6 +288,7 @@
     return current + Math.max(-maxStep, Math.min(maxStep, d));
   }
 
+  const perfNow = typeof performance !== 'undefined' && performance.now ? () => performance.now() : () => Date.now();
   const ALIVE = 'alive', CRYSTALLIZING = 'crystallizing', CRYSTALLIZED = 'crystallized';
   const PLAYER = 0, ENEMY = 1;
 
@@ -1267,8 +1268,12 @@
 
   Sim.prototype.step = function () {
     const T = this.T, dt = this.dt;
+    // Profiling (server load page): time spent in each phase, summed into this.prof (ms).
+    let pt = this.profile ? perfNow() : 0;
+    const mark = name => { if (this.profile) { const n = perfNow(); this.prof[name] = (this.prof[name] || 0) + n - pt; pt = n; } };
     this.events.length = 0;
     this._applyCommands();
+    mark('commands');
 
     // --- Beat mode: when the song reaches a new step, every lane that plays on
     // it hands its ships a time slice. Shared song + tick = same on every machine.
@@ -1304,6 +1309,7 @@
       if (pick) { this.aiPick[t] = pick.id; pick.decTick = this.tick; this.aiBudget[t] -= 1; }
     }
 
+    mark('ai');
     // --- Frozen frame + spatial grid: what every ship sees this tick. ---
     const F = this.frame;
     F.length = this.units.length;
@@ -1329,18 +1335,22 @@
       if (u.held) u.tier = 0; // the possessed ship is always full-rate
     }
 
+    mark('grid');
     // --- THINK (order-independent: see _think) ---
     this._fires = []; this._charges = []; this._deaths = [];
     const n = this.units.length;
     for (let i = 0; i < n; i++) this._think(this.units[this._reverseThink ? n - 1 - i : i]);
 
+    mark('think');
     // --- RESOLVE: apply intents in ship-id order. ---
     this._fires.sort((a, b) => a.u.id - b.u.id || a.gi - b.gi);
     for (const f of this._fires) {
       this._fireProjectile(f.u, f.angle, f.g, f);
       this.events.push({ type: 'fired', unit: f.u.id, gun: f.gi, target: f.g.targetId, spread: f.spread, lockQ: f.g.lockQ, tick: this.tick });
     }
+    mark('resolve');
     this._launchers(dt);
+    mark('missiles');
     this._charges.sort((a, b) => a.to - b.to || a.from - b.from);
     for (const c of this._charges) {
       const v = this.units[c.to];
@@ -1359,6 +1369,7 @@
       }
     }
 
+    mark('damage');
     // --- Projectiles: move, contact-detonate on foes and crystals, flak at end of life. ---
     this.gridNow.clear();
     for (const u of this.units) if (u.state === ALIVE) this.gridNow.insert(u.id, u.x, u.y);
@@ -1386,10 +1397,12 @@
       if (boom) this._detonate(p);
     }
 
+    mark('projectiles');
     this._gridLive = false;
     if (this.mode === 'carrier') this._economy(dt);
     if (this.stressCount && this.tick % 15 === 0) this._reinforce();
     if (this.mode === 'fleet') this._fleetTick(dt);
+    mark('upkeep');
 
     this.tick++;
   };

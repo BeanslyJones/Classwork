@@ -230,3 +230,23 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   comes next.
 - **More players:** up to 8 seats on LAN; seat & 1 = side. In Fleet Battle each player
   flies only their own fleet; in other modes players on a side share its ships.
+
+## 24. Scaling to thousands of players — OPTIONS (logged, not decided)
+- **Target talked about:** ~8,000 players with less delay than Massdrift's 400 ms tick.
+  At ~6 ships each that is ~48,000 ships plus ~25,000 shots in flight; or 2–3 ships
+  per player in big battles (16,000–24,000 ships).
+- **Option A — Massdrift-style (shard by player):** conductor tick barrier
+  (`combat.sync.tick` / ACKs), validators + durable JetStream input stream
+  (`raw.inputs`), workers owning players with Apply → Calculate two-phase tick and
+  one-tick-late damage, visibility pods (pair parity + per-player bitmaps), collision
+  pods, recovery stream (last 8 slices per worker). Cost: all-to-all slice exchange.
+- **Option B — shard by location (cells + hand-off):** BigWorld-style cells with ghost
+  margins (~max weapon reach + one tick of travel), quadtree split/merge by load
+  (Hadean / Dual Universe), hand-off at tick boundaries, EVE-style time dilation for a
+  single overloaded cell. Write only a thin cell manager; reuse NATS + our sim.
+- **Either way:** binary, changes-only, visibility-filtered updates (max zoom bounds
+  what each player needs); shots sent once (deterministic flight), only guided
+  ordnance updated; overhead layer (aircraft, artillery arcs, large missiles, lasers)
+  as its own service with wider, slower interest; 2D helps by a constant factor;
+  ~100–150 ms tick (7–10 Hz) for the big server, client gliding + own-ship prediction,
+  lock-game release sent as a tick number.

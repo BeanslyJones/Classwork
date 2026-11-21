@@ -29,7 +29,7 @@ const SNAP_HZ = parseInt(process.env.SNAP_HZ || '30', 10); // battle snapshots p
 const ROOT = __dirname;
 const JS = 'text/javascript; charset=utf-8';
 const STATIC = {
-  '/combat.html': ['combat.html', 'text/html; charset=utf-8'], '/sim.js': ['sim.js', JS], '/sfx.js': ['sfx.js', JS],
+  '/combat.html': ['combat.html', 'text/html; charset=utf-8'], '/perf.html': ['perf.html', 'text/html; charset=utf-8'], '/sim.js': ['sim.js', JS], '/sfx.js': ['sfx.js', JS],
   '/shared/bus.js': ['../shared/bus.js', JS], '/shared/wx/rng.js': ['../shared/wx/rng.js', JS],
   '/shared/wx/field.js': ['../shared/wx/field.js', JS], '/shared/wx/global.js': ['../shared/wx/global.js', JS],
   '/shared/wx/agents.js': ['../shared/wx/agents.js', JS], '/shared/wx/render.js': ['../shared/wx/render.js', JS],
@@ -75,6 +75,7 @@ function startSimService(bus, opts) {
     sim = new Sim(seed, overrides, null, { mode: mode, song: song, count: count,
                                            fleets: Object.keys(fleets).filter(k => seated[k]).map(k => Object.assign({}, fleets[k], { ctl: +k })) });
     sim.human = humans.slice();
+    sim.profile = true; sim.prof = {};
     sim.setControllers(seated.map((on, k) => (on ? k : -1)).filter(k => k >= 0));
     pendingEvents = [];
     newWeather();
@@ -137,7 +138,7 @@ function startSimService(bus, opts) {
   });
 
   // Performance, reported to every screen twice a second.
-  const perf = { stepMs: 0, stepMax: 0, ticks: 0, wxMs: 0, snapMs: 0, loops: 0, behind: 0 };
+  const perf = { stepMs: 0, stepMax: 0, ticks: 0, wxMs: 0, snapMs: 0, loops: 0, behind: 0, lagMax: 0, since: Date.now() };
   const ms = t0 => Number(process.hrtime.bigint() - t0) / 1e6;
   const perfTimer = setInterval(() => {
     const L = Math.max(1, perf.loops), T = Math.max(1, perf.ticks);
@@ -147,8 +148,12 @@ function startSimService(bus, opts) {
       ticksPerSec: perf.ticks * 2, wxMs: +(perf.wxMs / L).toFixed(2), snapMs: +(perf.snapMs / L).toFixed(2),
       snapHz: SNAP_HZ, behind: perf.behind, zones: zoneCount.slice(),
       wxKf: wx.agent.published, wxLog: wx.log.log.size, mem: Math.round(process.memoryUsage().heapUsed / 1048576),
+      // For the load page: total ms spent per part over this window (sim phases + server work).
+      windowSec: (Date.now() - perf.since) / 1000, cpu: Object.assign({}, sim.prof, { weather: perf.wxMs, snapshot: perf.snapMs }),
+      lagMax: Math.round(perf.lagMax), projectiles: sim.projectiles.filter(p => p.active).length, mode: mode,
     });
-    perf.stepMs = perf.stepMax = perf.ticks = perf.wxMs = perf.snapMs = perf.loops = perf.behind = 0;
+    sim.prof = {};
+    perf.stepMs = perf.stepMax = perf.ticks = perf.wxMs = perf.snapMs = perf.loops = perf.behind = perf.lagMax = 0; perf.since = Date.now();
   }, 500);
 
   // Fixed-tick loop, scaled by the shared game speed. State goes out every loop.
@@ -156,6 +161,7 @@ function startSimService(bus, opts) {
   const timer = setInterval(() => {
     const now = process.hrtime.bigint();
     const dt = Math.min(0.25, Number(now - last) / 1e9);
+    perf.lagMax = Math.max(perf.lagMax, dt * 1000 - 1000 / SNAP_HZ); // how late this loop ran (event-loop lag)
     last = now;
     if (!paused) acc += dt * speed;
     const stepLen = 1 / sim.T.tickRate;
@@ -214,7 +220,8 @@ function startGateway(bus, opts) {
   bus.subscribe('sim.restarted', () => { for (const [id, c] of clients) hello(c, id); });
   // Weather keyframes go to screens only up to "now + lead": a screen must
   // never hold far-future weather (that would be a perfect forecast).
-  let simTick = 0, wxHeld = [], snapBytes = 0;
+  let simTick = 0, wxHeld = [], snapBytes = 0, gwMs = 0;
+  const watchers = new Set(); // load-page viewers: perf numbers only, no seat
   const wxCap = kf => Math.floor(simTick / WX_PER_TICK / kf.every) + WX_LEAD;
   function flushWx() {
     if (!wxHeld.length) return;
@@ -229,10 +236,12 @@ function startGateway(bus, opts) {
   bus.subscribe('sim.restarted', () => { simTick = 0; });
 
   bus.subscribe('state.full', snap => {
+    const g0 = process.hrtime.bigint();
     simTick = snap.tick; flushWx();
     const text = 'event: snap\ndata: ' + JSON.stringify(snap) + '\n\n';
     snapBytes = text.length;
     for (const c of clients.values()) if (!filtered || c.seat < 0) write(c, text);
+    gwMs += Number(process.hrtime.bigint() - g0) / 1e6;
   });
   bus.subscribe('state.player.*', (snap, subject) => {
     const team = +subject.split('.')[2], text = 'event: snap\ndata: ' + JSON.stringify(snap) + '\n\n';
@@ -245,7 +254,12 @@ function startGateway(bus, opts) {
     perfAt = now;
     let maxC = 0;
     for (const c of clients.values()) { maxC = Math.max(maxC, c.bytes / secs); c.bytes = 0; }
-    broadcast('perf', Object.assign({ screens: clients.size, snapKB: +(snapBytes / 1024).toFixed(1), outKBs: Math.round(bytesOut / secs / 1024), perScreenKBs: Math.round(maxC / 1024) }, p));
+    const msg = Object.assign({ screens: clients.size, snapKB: +(snapBytes / 1024).toFixed(1), outKBs: Math.round(bytesOut / secs / 1024), perScreenKBs: Math.round(maxC / 1024) }, p);
+    msg.cpu = Object.assign({}, p.cpu, { sending: gwMs });
+    gwMs = 0;
+    broadcast('perf', msg);
+    const text = 'event: perf\ndata: ' + JSON.stringify(msg) + '\n\n';
+    for (const w of watchers) w.write(text);
     bytesOut = 0;
   });
 
@@ -292,6 +306,27 @@ function startGateway(bus, opts) {
         if (err) { res.writeHead(500); res.end(); return; }
         res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
         res.end(buf);
+      });
+      return;
+    }
+    // Server load page: a perf-only stream (takes no seat) and a few stress-test controls.
+    if (req.method === 'GET' && url.pathname === '/perf-events') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      res.write(': load page\n\n');
+      watchers.add(res);
+      req.on('close', () => watchers.delete(res));
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/perf-cmd') {
+      let body = '';
+      req.on('data', d => { body += d; if (body.length > 512) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const cmd = JSON.parse(body);
+          if (cmd.type === 'restart' && ['stress', 'skirmish'].indexOf(cmd.mode) >= 0) bus.publish('ctl', { type: 'restart', newSeed: true, mode: cmd.mode, count: cmd.count | 0 });
+          else if (cmd.type === 'speed' || cmd.type === 'pause') bus.publish('ctl', cmd);
+        } catch (e) { /* ignore malformed */ }
+        res.writeHead(204); res.end();
       });
       return;
     }
@@ -356,7 +391,8 @@ if (require.main === module) {
       if (n.family === 'IPv4' && !n.internal) console.log('  http://' + n.address + ':' + PORT + '/');
     }
     console.log('  http://localhost:' + PORT + '/   (this computer)');
-    console.log('First to join flies blue, second flies red; empty seats are flown by the AI.');
+    console.log('Players alternate blue / red (up to ' + MAX_SEATS + '); empty sides are flown by the AI.');
+    console.log('Server load page: http://localhost:' + PORT + '/perf.html');
   });
 }
 
