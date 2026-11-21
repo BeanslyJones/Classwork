@@ -357,7 +357,11 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Commanding is gated by REP:** you need a certain (hidden) REP before you can be
   a commander.
 - **Material:** a separate stat for how much your fleet and gear are worth.
-- **Level:** each player also has a level (how it's earned and what it gates: open).
+- **Level:** each player also has a level, earned as XP from missions. XP depends on
+  the mission and on what you brought: number of ships, ship types, weapon types
+  and equipment. (What Level unlocks: open.)
+- **Visibility:** Material and Level are shown to others only in **rough bands**
+  (e.g. "Light / Medium / Heavy / Capital-class fleet"), never exact numbers.
 - **Recovered from the owner's earlier design talks (~2–3 July 2026, original chat not
   available here):** other players can factor reputation into deciding whether to
   join a mission, and **every mission's results include a REP change** for the
@@ -376,3 +380,11 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
     "Reliable", "Untested", "Known deserter". No numbers.
   - **Plain, verifiable history:** contracts finished vs broken, rescues
     delivered, hours played.
+
+## 30. Ship sizes, roles and customisation
+- **Cap ships must carry their wing,** so each tier is many times larger than the
+  tier it carries (a large ship holds its medium ships, a medium ship its small ones).
+- **Roles at every size:** support (batteries, repairs / heals), offence (huge cannons
+  on the biggest ships, smaller cannons below), and utility. Exact role list open.
+- **Every ship is customised with parts** on the Tetris-style loadout grid (06's
+  builder, decision 10's rolled per-cell stats; shields are parts too).
