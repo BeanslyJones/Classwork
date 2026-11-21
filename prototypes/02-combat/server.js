@@ -21,7 +21,8 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const zlib = require('zlib');
-const COMPRESS = process.env.COMPRESS !== '0'; // gzip each screen's live stream (COMPRESS=0 to compare without)
+const COMPRESS = process.env.COMPRESS !== '0';
+const DELTA = process.env.DELTA !== '0'; // dead reckoning: send only what changed (DELTA=0 = whole battle every update, to compare) // gzip each screen's live stream (COMPRESS=0 to compare without)
 const { Sim, TUNABLES, SONGS } = require('./sim.js');
 const { createBus } = require('../shared/bus.js');
 const Wx = require('../shared/wx/agents.js');
@@ -65,6 +66,8 @@ function startSimService(bus, opts) {
   // (wx.clock), and is a weather client that samples every ship's zone each
   // loop (no effects yet).
   let wx = null, lastReset = null, wxStats = { published: 0, logSize: 0 };
+  let needKeyframe = true;
+  bus.subscribe('sim.keyframe', () => { needKeyframe = true; }); // a screen joined: send it everything next update
   const wxOut = new Float64Array(12), zoneCount = [0, 0, 0, 0];
   bus.subscribe('wx.stats', m => { if (m) wxStats = m; });
   bus.subscribe('wx.hello', () => { if (lastReset) bus.publish('wx.ctl', lastReset); }); // a weather service (re)started: tell it the current sky
@@ -198,7 +201,10 @@ function startSimService(bus, opts) {
     if (interest) {
       for (const team of [0, 1]) bus.publish('state.player.' + team, sim.snapshot(pendingEvents, { team: team, radius: interest }));
     }
-    const full = sim.snapshot(pendingEvents);
+    // Dead reckoning: usually only ships whose path changed; a full refresh every
+    // second and whenever someone joins (sim.keyframe).
+    const full = DELTA ? sim.snapshotDelta(pendingEvents, needKeyframe) : sim.snapshot(pendingEvents);
+    needKeyframe = false;
     bus.publish('state.full', full); // spectators (and everyone when not filtering)
     perf.snapMs += ms(t2); perf.loops++;
     pendingEvents = [];
@@ -395,6 +401,7 @@ function startGateway(bus, opts) {
       clients.set(id, c);
       c.seat = takeSeat(id);
       hello(c, id);
+      bus.publish('sim.keyframe', {}); // so it gets the whole battle on the next update
       broadcast('lobby', lobby());
       req.on('close', () => leave(id));
       return;

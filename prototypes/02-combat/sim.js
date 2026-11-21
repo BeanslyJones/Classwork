@@ -811,7 +811,7 @@
     p.damage = cls.damage; p.aoe = cls.aoe;
     p.ttl = cls.projTtl || this.T.projTtlSec;
     p.vsCap = cls.vsCapital || 1;
-    p.kind = 0; p.target = -1; p.turn = 0; p.ff = false;
+    p.kind = 0; p.target = -1; p.turn = 0; p.ff = false; p.gen = (p.gen || 0) + 1;
     this.poolStats.fired++;
   };
 
@@ -879,7 +879,7 @@
     p.active = true; p.x = u.x + Math.cos(angle) * ur; p.y = u.y + Math.sin(angle) * ur;
     p.vx = Math.cos(angle) * o.speed; p.vy = Math.sin(angle) * o.speed; p.speed = o.speed;
     p.owner = u.id; p.team = u.team; p.damage = o.damage; p.aoe = o.aoe; p.ttl = o.ttl; p.vsCap = o.vsCapital;
-    p.kind = ORD_KIND[kind]; p.ff = true;
+    p.kind = ORD_KIND[kind]; p.ff = true; p.gen = (p.gen || 0) + 1;
     p.target = kind === 'missile' && lock > 0 ? t.id : -1;
     p.turn = kind === 'missile' ? o.turn * lock : kind === 'torpedo' ? o.turn : 0;
     p.arm = kind === 'torpedo' ? o.armDist : 0; p.search = kind === 'torpedo' ? o.search : 0;
@@ -1403,6 +1403,10 @@
     if (this.mode === 'carrier') this._economy(dt);
     if (this.stressCount && this.tick % 15 === 0) this._reinforce();
     if (this.mode === 'fleet') this._fleetTick(dt);
+    for (const u of this.units) { // turn rate this tick (screens use it to predict arcs)
+      u._om = u._ph === undefined ? 0 : wrapAngle(u.heading - u._ph) / dt;
+      u._ph = u.heading;
+    }
     mark('upkeep');
 
     this.tick++;
@@ -1520,6 +1524,55 @@
   const CODE_STATE = ['alive', 'crystallizing', 'crystallized'];
   const gunSnap = g => [r3(g.gunAngle), g.targetId, r3(g.lockQ), r3(g.lockCap), r3(g.entryQ)];
   function gunApply(g, a) { g.gunAngle = a[0]; g.targetId = a[1]; g.lockQ = a[2]; g.lockCap = a[3]; g.entryQ = a[4]; }
+
+  // ---- Dead reckoning (network) ----
+  // Screens move ships forward themselves between updates: from the last values
+  // sent (x, y, heading, speed, turn rate) a ship follows an arc (or a line). The
+  // server runs the same guess and re-sends a ship only when the guess is off by
+  // more than DR_POS units / DR_ANG rad, or something else about it changed.
+  // Shots are sent once when fired and moved by the screens; only steering
+  // ones (missiles, torpedoes) are re-sent. A full refresh every DR_KEYFRAME
+  // updates (and for anyone joining) clears any drift.
+  function drPredict(x, y, h, sp, om, t) {
+    if (Math.abs(om) < 1e-4) return [x + Math.cos(h) * sp * t, y + Math.sin(h) * sp * t, h];
+    const h2 = h + om * t, r = sp / om;
+    return [x + r * (Math.sin(h2) - Math.sin(h)), y - r * (Math.cos(h2) - Math.cos(h)), h2];
+  }
+  const DR_POS = 2, DR_ANG = 0.05, DR_KEYFRAME = 30;
+  const qz = (v, step) => Math.round(v / step);
+  function setProj(p, a) {
+    p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1;
+    p.kind = a[5] | 0; p.team = a[6] | 0; p.arm = a[7] ? 1 : 0; p.target = -1;
+  }
+  Sim.prototype._projArr = function (p) {
+    // [.., kind, team, dormant]: dormant = a torpedo still running dumb (enemies can't see it yet)
+    return [r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0, p.kind, p.team, p.kind === 3 && p.arm > 0 && p.target < 0 ? 1 : 0];
+  };
+  Sim.prototype._unitArr = function (u) {
+    return [
+      r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
+      STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
+      r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
+      u.goal === null ? null : r3(u.goal),
+      CLASS_LIST.indexOf(u.cls), u.team,
+      u.guns[0] === u ? 0 : u.guns.map(gunSnap),
+      r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
+      LANES.indexOf(u.lane), r3(u.activeLeft),
+      u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd), u.owner,
+      r2(Math.hypot(u.vx || 0, u.vy || 0)), r3(u._om || 0), // [25] speed, [26] turn rate: the dead-reckoning basis
+    ];
+  };
+  // Everything about a ship except where it is: if this changes, re-send it.
+  Sim.prototype._drKey = function (u) {
+    let k = u.state + '|' + (u.held ? 1 : 0) + '|' + u.targetId + '|' + qz(u.lockQ, 0.1) + '|' + qz(u.lockCap, 0.1) + '|' + qz(u.entryQ, 0.1) +
+      '|' + qz(u.energy, 2) + '|' + qz(u.momentum, 0.1) + '|' + qz(u.crystallizeTimer, 0.1) + '|' + (u.goal === null ? 'n' : qz(u.goal, 0.05)) +
+      '|' + u.cls + '|' + u.team + '|' + u.owner + '|' + qz(u.battery, 2) + '|' + (u.charging >= this.tick - 1 ? 1 : 0) + '|' + u.lane +
+      '|' + qz(u.activeLeft, 0.05) + '|' + qz(u.launchCd, 0.5) + '|' + (u.ml ? this.tick : 0);
+    for (const w of u.weak) k += '|' + (w.out ? 'x' : qz(w.hp, 5));
+    if (u.guns[0] !== u) for (const g of u.guns) k += '|' + g.targetId + ',' + qz(g.gunAngle, 0.05) + ',' + qz(g.lockQ, 0.1);
+    else k += '|' + qz(wrapAngle(u.gunAngle - u.heading), 0.05);
+    return k;
+  };
   // viewer (optional): { team, radius } — interest management. Only that side's
   // ships and other ships within `radius` of one of them are sent (with `ids`),
   // the visibility-worker job in a sharded build. Omit it for the full state.
@@ -1530,24 +1583,17 @@
       list = this.units.filter(u => u.team === viewer.team ||
         mine.some(m => (m.x - u.x) * (m.x - u.x) + (m.y - u.y) * (m.y - u.y) <= r2v));
     }
-    const units = list.map(u => [
-      r2(u.x), r2(u.y), r3(u.heading), r3(u.gunAngle), r3(u.momentum), r2(u.energy),
-      STATE_CODE[u.state], u.held ? 1 : 0, u.targetId, r3(u.lockQ), r3(u.lockCap), r3(u.entryQ),
-      r3(u.crystallizeTimer), u.weak.map(w => w.out ? -1 : r2(w.hp)),
-      u.goal === null ? null : r3(u.goal),
-      CLASS_LIST.indexOf(u.cls), u.team,
-      u.guns[0] === u ? 0 : u.guns.map(gunSnap),
-      r2(u.battery), u.charging === this.tick - 1 || u.charging === this.tick ? 1 : 0,
-      LANES.indexOf(u.lane), r3(u.activeLeft),
-      u.ml ? [r2(u.ml.lx), r2(u.ml.ly), u.ml.grade, u.ml.target] : 0, r2(u.launchCd), u.owner,
-    ]);
-    const proj = [];
-    // [.., kind, team, dormant]: dormant = a torpedo still running dumb (enemies can't see it yet)
-    for (const p of this.projectiles) if (p.active) proj.push([r2(p.x), r2(p.y), r2(p.vx), r2(p.vy), p.vsCap > 1 ? 1 : 0, p.kind, p.team,
-      p.kind === 3 && p.arm > 0 && p.target < 0 ? 1 : 0]);
+    const units = list.map(u => this._unitArr(u));
+    const proj = [], projIdx = [];
+    for (const p of this.projectiles) if (p.active) { proj.push(this._projArr(p)); projIdx.push(p.i); }
+    return Object.assign(this._snapHead(events), {
+      units: units, proj: proj, projIdx: projIdx, ids: viewer ? list.map(u => u.id) : undefined, count: this.units.length,
+    });
+  };
+  // The small, always-sent part of every update (settings, scores, mode state, events).
+  Sim.prototype._snapHead = function (events) {
     return {
       tick: this.tick, held: this.held.slice(), aim: this.aim.map(r3), human: this.human.slice(),
-      units: units, proj: proj, ids: viewer ? list.map(u => u.id) : undefined, count: this.units.length,
       hazards: this.hazards.map(h => [r2(h.x), r2(h.y), r2(h.r), h.salvage ? 1 : 0]),
       events: events || [],
       apm: [Math.round(this.apm(0)), Math.round(this.apm(1))],
@@ -1559,44 +1605,112 @@
       wrecks: this.wrecks.map(w => [r2(w.x), r2(w.y), w.value, r2(w.ttl)]),
     };
   };
+  // Dead-reckoning update for everyone (server side). Usually tiny: only ships
+  // whose guessed path went wrong or whose state changed, shots fired / gone, and
+  // steering missiles. force = full refresh now (someone joined).
+  Sim.prototype.snapshotDelta = function (events, force) {
+    const st = this._dr || (this._dr = { n: 0, units: [], proj: [] });
+    const full = force || st.n % DR_KEYFRAME === 0;
+    st.n++;
+    if (full) {
+      const snap = this.snapshot(events);
+      snap.full = true;
+      st.units = this.units.map((u, i) => ({ a: snap.units[i], key: this._drKey(u), t: this.tick }));
+      st.proj = [];
+      for (const p of this.projectiles) st.proj[p.i] = p.active ? p.gen : -1;
+      return snap;
+    }
+    const dt = this.dt, upd = [];
+    for (const u of this.units) {
+      const sent = st.units[u.id], key = this._drKey(u);
+      let send = !sent || key !== sent.key;
+      if (!send && u.state === ALIVE) {
+        const a = sent.a, g = drPredict(a[0], a[1], a[2], a[25], a[26], (this.tick - sent.t) * dt);
+        send = Math.hypot(g[0] - u.x, g[1] - u.y) > DR_POS || Math.abs(wrapAngle(g[2] - u.heading)) > DR_ANG;
+      }
+      if (send) {
+        const a = this._unitArr(u);
+        st.units[u.id] = { a: a, key: key, t: this.tick };
+        upd.push([u.id].concat(a));
+      }
+    }
+    const pAdd = [], pDel = [], pUpd = [];
+    for (const p of this.projectiles) {
+      const was = st.proj[p.i] === undefined ? -1 : st.proj[p.i];
+      if (!p.active) { if (was !== -1) { pDel.push(p.i); st.proj[p.i] = -1; } continue; }
+      if (was !== p.gen) { pAdd.push([p.i].concat(this._projArr(p))); st.proj[p.i] = p.gen; }
+      else if (p.kind === 1 || p.kind === 3) pUpd.push([p.i].concat(this._projArr(p))); // they steer
+    }
+    return Object.assign(this._snapHead(events), { delta: true, upd: upd, pAdd: pAdd, pDel: pDel, pUpd: pUpd, count: this.units.length });
+  };
+  // Screens: apply a full update, or a dead-reckoning update (snap.delta).
   Sim.prototype.applySnapshot = function (snap) {
+    if (snap.delta) return this._applyDelta(snap);
     this.tick = snap.tick; this.held = snap.held; this.aim = snap.aim; this.human = snap.human;
     if (snap.ids) for (const u of this.units) u.hidden = true; // filtered view: only listed ships are current
-    snap.units.forEach((a, k) => {
-      const i = snap.ids ? snap.ids[k] : k;
-      let u = this.units[i];
-      const cls = CLASS_LIST[a[15]] || 'fighter', team = a[16] | 0;
-      if (!u) {
-        // A ship the server built after we joined: create it locally to render.
-        while (this.units.length < i) this._spawn('fighter', 0, 0, 0, 0).state = CRYSTALLIZED;
-        u = this._spawn(cls, team, a[0], a[1], a[2]);
-      } else if (a[15] !== undefined && (u.cls !== cls || u.team !== team)) {
-        // Out of step with the server (e.g. it switched game mode): rebuild this slot.
-        const fresh = this._spawn(cls, team, a[0], a[1], a[2]);
-        this.units.pop(); fresh.id = i; if (fresh.guns[0] === fresh) fresh.guns = [fresh];
-        this.units[i] = u = fresh;
-      }
-      u.x = a[0]; u.y = a[1]; u.heading = a[2]; u.gunAngle = a[3]; u.momentum = a[4]; u.energy = a[5];
-      u.state = CODE_STATE[a[6]]; u.held = !!a[7]; u.targetId = a[8]; u.lockQ = a[9]; u.lockCap = a[10];
-      u.entryQ = a[11]; u.crystallizeTimer = a[12]; u.goal = a[14] === undefined ? null : a[14];
-      a[13].forEach((hp, k) => { if (u.weak[k]) { u.weak[k].out = hp < 0; u.weak[k].hp = Math.max(0, hp); } });
-      if (Array.isArray(a[17])) a[17].forEach((ga, k) => { if (u.guns[k] && u.guns[k] !== u) gunApply(u.guns[k], ga); });
-      if (a[18] !== undefined) u.battery = a[18];
-      u.charging = a[19] ? snap.tick : -10;
-      if (a[20] !== undefined && a[20] >= 0) u.lane = LANES[a[20]];
-      if (a[21] !== undefined) u.activeLeft = a[21];
-      u.ml = a[22] ? { lx: a[22][0], ly: a[22][1], grade: a[22][2], target: a[22][3] } : null;
-      u.launchCd = a[23] || 0;
-      if (a[24] !== undefined) u.owner = a[24];
-      u.hidden = false;
+    snap.units.forEach((a, k) => this._applyUnit(snap.ids ? snap.ids[k] : k, a, snap.tick));
+    for (const p of this.projectiles) p.active = false;
+    snap.proj.forEach((a, k) => {
+      const i = snap.projIdx ? snap.projIdx[k] : k; // server pool slot (older servers: in order)
+      while (this.projectiles.length <= i && this._growPool(1024)) { /* grow to fit */ }
+      if (this.projectiles[i]) setProj(this.projectiles[i], a);
     });
-    while (this.projectiles.length < snap.proj.length && this._growPool(1024)) { /* grow to fit */ }
-    let k = 0;
-    for (const p of this.projectiles) {
-      const a = snap.proj[k];
-      if (a) { p.active = true; p.x = a[0]; p.y = a[1]; p.vx = a[2]; p.vy = a[3]; p.vsCap = a[4] ? 2 : 1; p.kind = a[5] | 0; p.team = a[6] | 0; p.arm = a[7] ? 1 : 0; p.target = -1; k++; }
-      else p.active = false;
+    this._lastNetTick = snap.tick;
+    this._applyHead(snap);
+  };
+  Sim.prototype._applyDelta = function (snap) {
+    const dt = this.dt, seen = new Set();
+    this.tick = snap.tick; this.held = snap.held; this.aim = snap.aim; this.human = snap.human;
+    for (const e of snap.upd) { this._applyUnit(e[0], e.slice(1), snap.tick); seen.add(e[0]); }
+    // Every ship not re-sent follows its last path (the server checked it's still within 2 units).
+    for (const u of this.units) {
+      if (seen.has(u.id) || !u._dr || u.state !== ALIVE) continue;
+      const b = u._dr, g = drPredict(b[0], b[1], b[2], b[3], b[4], (snap.tick - b[5]) * dt);
+      u.x = g[0]; u.y = g[1]; u.heading = g[2];
+      if (u.guns[0] === u) u.gunAngle = g[2] + b[6];
     }
+    // Shots: move the dumb ones forward, then drop the gone, add the new, refresh the steering ones.
+    const el = (snap.tick - (this._lastNetTick === undefined ? snap.tick : this._lastNetTick)) * dt;
+    for (const p of this.projectiles) if (p.active) { p.x += p.vx * el; p.y += p.vy * el; }
+    for (const i of snap.pDel) if (this.projectiles[i]) this.projectiles[i].active = false;
+    for (const e of snap.pAdd.concat(snap.pUpd)) {
+      const i = e[0];
+      while (this.projectiles.length <= i && this._growPool(1024)) { /* grow to fit */ }
+      if (this.projectiles[i]) setProj(this.projectiles[i], e.slice(1));
+    }
+    this._lastNetTick = snap.tick;
+    this._applyHead(snap);
+  };
+  Sim.prototype._applyUnit = function (i, a, tick) {
+    let u = this.units[i];
+    const cls = CLASS_LIST[a[15]] || 'fighter', team = a[16] | 0;
+    if (!u) {
+      // A ship the server built after we joined: create it locally to render.
+      while (this.units.length < i) this._spawn('fighter', 0, 0, 0, 0).state = CRYSTALLIZED;
+      u = this._spawn(cls, team, a[0], a[1], a[2]);
+    } else if (a[15] !== undefined && (u.cls !== cls || u.team !== team)) {
+      // Out of step with the server (e.g. it switched game mode): rebuild this slot.
+      const fresh = this._spawn(cls, team, a[0], a[1], a[2]);
+      this.units.pop(); fresh.id = i; if (fresh.guns[0] === fresh) fresh.guns = [fresh];
+      this.units[i] = u = fresh;
+    }
+    u.x = a[0]; u.y = a[1]; u.heading = a[2]; u.gunAngle = a[3]; u.momentum = a[4]; u.energy = a[5];
+    u.state = CODE_STATE[a[6]]; u.held = !!a[7]; u.targetId = a[8]; u.lockQ = a[9]; u.lockCap = a[10];
+    u.entryQ = a[11]; u.crystallizeTimer = a[12]; u.goal = a[14] === undefined ? null : a[14];
+    a[13].forEach((hp, k) => { if (u.weak[k]) { u.weak[k].out = hp < 0; u.weak[k].hp = Math.max(0, hp); } });
+    if (Array.isArray(a[17])) a[17].forEach((ga, k) => { if (u.guns[k] && u.guns[k] !== u) gunApply(u.guns[k], ga); });
+    if (a[18] !== undefined) u.battery = a[18];
+    u.charging = a[19] ? tick : -10;
+    if (a[20] !== undefined && a[20] >= 0) u.lane = LANES[a[20]];
+    if (a[21] !== undefined) u.activeLeft = a[21];
+    u.ml = a[22] ? { lx: a[22][0], ly: a[22][1], grade: a[22][2], target: a[22][3] } : null;
+    u.launchCd = a[23] || 0;
+    if (a[24] !== undefined) u.owner = a[24];
+    // Dead-reckoning basis: x, y, heading, speed, turn rate, tick, gun offset from heading.
+    u._dr = [a[0], a[1], a[2], a[25] || 0, a[26] || 0, tick, wrapAngle(a[3] - a[2])];
+    u.hidden = false;
+  };
+  Sim.prototype._applyHead = function (snap) {
     this.hazards = snap.hazards.map(h => ({ x: h[0], y: h[1], r: h[2], salvage: !!h[3] }));
     this.events = snap.events;
     this._netApm = snap.apm; this._netAiApm = snap.aiApm;
