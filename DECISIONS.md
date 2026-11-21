@@ -357,6 +357,7 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Commanding is gated by REP:** you need a certain (hidden) REP before you can be
   a commander.
 - **Material:** a separate stat for how much your fleet and gear are worth.
+- **Level:** each player also has a level (how it's earned and what it gates: open).
 - **Moves slowly,** based on time in game and actions (contracts kept or broken,
   orders followed, deserting mid-fight, rescues delivered, etc.).
 - **Player votes:** you can up- or down-vote a player, but only one you could see
