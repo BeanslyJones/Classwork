@@ -338,5 +338,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   **maximum bid** that rescuers cannot see. Rescuers see the request (amount
   hidden) and enter their **lowest price** (a blind reverse auction). The player
   in need sees every available rescuer's info (REP, ship, distance / ETA, price)
-  and picks one. Exact meaning of yellow vs red still to decide.
+  and picks one.
+- **Yellow = need help soon** (low battery, stranded, pinned down). **Red = about to
+  die** (hull failing, hangar on fire, re-entry gone wrong). The difference is
+  urgency only.
+- **No sure-fire REP:** answering an alert never grants REP by itself; REP comes
+  from how the job actually goes (delivered, on time, terms kept).
 - Ties to: evac dropships (decision 26), escrow and contracts (27), REP.
