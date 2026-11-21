@@ -347,3 +347,19 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **No sure-fire REP:** answering an alert never grants REP by itself; REP comes
   from how the job actually goes (delivered, on time, terms kept).
 - Ties to: evac dropships (decision 26), escrow and contracts (27), REP.
+
+## 29. REP (reputation)
+- **Several tracks, not one number,** e.g. Reliability (keeps contracts, doesn't walk
+  out), Combat (results in battle), Command (how wings do under you). Final list open.
+- **Hidden:** players never see the raw numbers.
+- **Moves slowly,** based on time in game and actions (contracts kept or broken,
+  orders followed, deserting mid-fight, rescues delivered, etc.).
+- **Player votes:** you can up- or down-vote a player, but only one you could see
+  or who killed you.
+- **Vote weight:** players who up- or down-vote habitually / indiscriminately have
+  their votes count for less. REP is an aggregate over time, never one vote.
+- **Mass down-votes** on one player trigger an investigation (anti-brigading)
+  rather than an instant REP drop.
+- ⚠ **Conflict to resolve:** decisions 27 and 28 say players see each other's REP
+  when negotiating and choosing a rescuer. With REP hidden, what do they see
+  instead? (open)
