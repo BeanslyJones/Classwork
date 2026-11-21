@@ -57,19 +57,23 @@ function startSimService(bus, opts) {
   let pendingEvents = [];
   const interest = opts.interestRadius > 0 ? opts.interestRadius : 0;
 
-  // Weather: the global agent + its log run on this bus; the sim service is a
-  // weather client that samples every ship's zone each loop (no effects yet).
-  let wx = null;
+  // Weather: the weather SERVICE (agent + keyframe log) runs separately — in
+  // this process by default, or as its own program (weather-service.js) over
+  // NATS. This sim only tells it when to reset (wx.ctl) and what time it is
+  // (wx.clock), and is a weather client that samples every ship's zone each
+  // loop (no effects yet).
+  let wx = null, lastReset = null, wxStats = { published: 0, logSize: 0 };
   const wxOut = new Float64Array(12), zoneCount = [0, 0, 0, 0];
+  bus.subscribe('wx.stats', m => { if (m) wxStats = m; });
+  bus.subscribe('wx.hello', () => { if (lastReset) bus.publish('wx.ctl', lastReset); }); // a weather service (re)started: tell it the current sky
   function newWeather() {
-    if (wx) { wx.log.stop(); wx.client.stop(); }
+    if (wx) wx.client.stop();
     const sky = Wx.skyForArena(sim.T.arenaRadius);
-    const log = Wx.startKeyframeLog(bus);
     // Ship zones only need a coarse grid (cells ~16 units; local detail is +-24 anyway): 4x cheaper to bake.
     const client = Wx.createWeatherClient(bus, { res: 16 });
-    const agent = Wx.startGlobalAgent(bus, { seed: (seed ^ 0x5EED5EED) >>> 0, overrides: sky, kfEvery: 5, lead: WX_LEAD });
-    agent.advanceTo(0); // publish the first keyframes now, so a screen asking straight away finds them
-    wx = { log: log, client: client, agent: agent, half: sky.worldSize / 2 };
+    wx = { client: client, half: sky.worldSize / 2 };
+    lastReset = { type: 'reset', seed: (seed ^ 0x5EED5EED) >>> 0, sky: sky, kfEvery: 5, lead: WX_LEAD };
+    bus.publish('wx.ctl', lastReset);
   }
   function newSim() {
     sim = new Sim(seed, overrides, null, { mode: mode, song: song, count: count,
@@ -147,7 +151,7 @@ function startSimService(bus, opts) {
       stepMs: +(perf.stepMs / T).toFixed(2), stepMax: +perf.stepMax.toFixed(1), budgetMs: +(1000 / sim.T.tickRate).toFixed(1),
       ticksPerSec: perf.ticks * 2, wxMs: +(perf.wxMs / L).toFixed(2), snapMs: +(perf.snapMs / L).toFixed(2),
       snapHz: SNAP_HZ, behind: perf.behind, zones: zoneCount.slice(),
-      wxKf: wx.agent.published, wxLog: wx.log.log.size, mem: Math.round(process.memoryUsage().heapUsed / 1048576),
+      wxKf: wxStats.published, wxLog: wxStats.logSize, bus: bus.nats ? 'nats' : 'in-process', mem: Math.round(process.memoryUsage().heapUsed / 1048576),
       // For the load page: total ms spent per part over this window (sim phases + server work).
       windowSec: (Date.now() - perf.since) / 1000, cpu: Object.assign({}, sim.prof, { weather: perf.wxMs, snapshot: perf.snapMs }),
       lagMax: Math.round(perf.lagMax), projectiles: sim.projectiles.filter(p => p.active).length, mode: mode,
@@ -178,7 +182,7 @@ function startSimService(bus, opts) {
     // Weather: bring the sky up to now, then sample every ship's zone.
     const t1 = process.hrtime.bigint();
     const wt = sim.tick / WX_PER_TICK;
-    wx.agent.advanceTo(wt);
+    bus.publish('wx.clock', { t: wt }); // the weather service keeps the sky 2 keyframes ahead of this
     if (wx.client.setTime(wt)) {
       zoneCount[0] = zoneCount[1] = zoneCount[2] = zoneCount[3] = 0;
       for (const u of sim.units) {
@@ -200,6 +204,26 @@ function startSimService(bus, opts) {
 
   publishSettings();
   return { get sim() { return sim; }, get weather() { return wx; }, settings: settings, stop() { clearInterval(timer); clearInterval(perfTimer); } };
+}
+
+// ------------------------------------------------------------ WEATHER service
+// The global weather agent + keyframe log. Runs here by default, or on its own
+// (node weather-service.js) over NATS. Listens: wx.ctl (reset to a new sky),
+// wx.clock (battle time). Publishes: wx.global.kf (via the agent), answers
+// wx.kf.get (via the log), wx.stats, and wx.hello on start.
+function startWeatherService(bus) {
+  let agent = null, log = null;
+  bus.subscribe('wx.ctl', m => {
+    if (!m || m.type !== 'reset') return;
+    if (log) log.stop();
+    log = Wx.startKeyframeLog(bus);
+    agent = Wx.startGlobalAgent(bus, { seed: m.seed >>> 0, overrides: m.sky, kfEvery: m.kfEvery || 5, lead: m.lead === undefined ? 2 : m.lead });
+    agent.advanceTo(0); // the first keyframes go out at once
+  });
+  bus.subscribe('wx.clock', m => { if (agent && m && m.t >= 0) agent.advanceTo(m.t); });
+  const timer = setInterval(() => { if (agent) bus.publish('wx.stats', { published: agent.published, logSize: log.log.size }); }, 500);
+  bus.publish('wx.hello', {});
+  return { stop() { clearInterval(timer); } };
 }
 
 // ------------------------------------------------------------ GATEWAY service
@@ -372,19 +396,28 @@ function startGateway(bus, opts) {
   return { server: server, seats: seats, clients: clients };
 }
 
-// Both services in one process, wired through an in-process bus.
+// The services in one process, wired through a bus: the in-process one by
+// default, or real NATS (opts.bus from connectBus). With opts.weatherExternal
+// the weather service is left to its own program (weather-service.js).
 function createServer(opts) {
   opts = Object.assign({ interestRadius: +(process.env.INTEREST_RADIUS || 0) }, opts || {});
-  const bus = createBus();
+  const bus = opts.bus || createBus();
+  const wxSvc = opts.weatherExternal ? null : startWeatherService(bus); // before the sim, so it hears the first reset
   const simSvc = startSimService(bus, opts);
   const gw = startGateway(bus, opts);
-  gw.server.on('close', () => simSvc.stop());
+  gw.server.on('close', () => { simSvc.stop(); if (wxSvc) wxSvc.stop(); });
   return { server: gw.server, get sim() { return simSvc.sim; }, seats: gw.seats, clients: gw.clients, bus: bus };
 }
 
-if (require.main === module) {
-  const { server } = createServer();
+if (require.main === module) (async () => {
+  // Optional: BUS=nats://localhost:4222 uses a real NATS server; WEATHER=external
+  // leaves weather to `node weather-service.js` (on its own core).
+  const bus = process.env.BUS ? await require('../shared/bus-nats.js').connectBus(process.env.BUS) : undefined;
+  const weatherExternal = process.env.WEATHER === 'external';
+  if (weatherExternal && !bus) console.warn('WEATHER=external needs BUS=nats://...; running weather in this process instead.');
+  const { server } = createServer({ bus: bus, weatherExternal: weatherExternal && !!bus });
   server.listen(PORT, '0.0.0.0', () => {
+    console.log('Bus: ' + (bus ? 'NATS at ' + process.env.BUS : 'in-process') + ' · weather: ' + (weatherExternal && bus ? 'separate program (weather-service.js)' : 'in this process'));
     console.log('Amann Assault LAN server running. Open one of these on each device:');
     const nets = os.networkInterfaces();
     for (const name in nets) for (const n of nets[name]) {
@@ -394,6 +427,6 @@ if (require.main === module) {
     console.log('Players alternate blue / red (up to ' + MAX_SEATS + '); empty sides are flown by the AI.');
     console.log('Server load page: http://localhost:' + PORT + '/perf.html');
   });
-}
+})().catch(e => { console.error(e.message || e); process.exit(1); });
 
-module.exports = { createServer };
+module.exports = { createServer, startWeatherService };

@@ -78,6 +78,27 @@ screen between slices. The lane bar under the menu lights up per note; tap it to
 re-plan. The music is synthesized live (music volume in sound settings). It works
 over LAN as well: **NEW: BEAT BATTLE (everyone)**.
 
+## Optional: real NATS, weather on its own core
+
+By default `node server.js` needs nothing else: every service talks over the
+built-in bus inside one program. To run the weather as a **separate program**
+(its own CPU core) over a real **NATS** server:
+
+1. Download `nats-server` for your OS from https://github.com/nats-io/nats-server/releases
+   (Windows: the `windows-amd64` zip) and run it: `nats-server` (listens on port 4222).
+2. In the repo's top folder, once: `npm install` (fetches the `nats` package).
+3. Start the game server pointed at NATS, with weather left out:
+   - Windows PowerShell: `$env:BUS="nats://localhost:4222"; $env:WEATHER="external"; node prototypes/02-combat/server.js`
+   - Mac / Linux: `BUS=nats://localhost:4222 WEATHER=external node prototypes/02-combat/server.js`
+4. In a second terminal, start the weather service:
+   - Windows PowerShell: `$env:BUS="nats://localhost:4222"; node prototypes/02-combat/weather-service.js`
+   - Mac / Linux: `BUS=nats://localhost:4222 node prototypes/02-combat/weather-service.js`
+
+The server prints which bus and weather mode it's using. The weather service can
+be started before or after the server, and restarted any time: it picks up the
+current sky from the server. `BUS=...` without `WEATHER=external` runs everything
+in one program, but over NATS.
+
 ## LAN multiplayer
 
 1. On any computer on your Wi-Fi (Node.js installed, nothing else needed):

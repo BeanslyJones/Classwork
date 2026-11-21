@@ -1,0 +1,13 @@
+{
+  "name": "amann-assault",
+  "private": true,
+  "description": "Amann Assault (formerly Radiant Warfront / Directional Front) prototypes and LAN server.",
+  "scripts": {
+    "start": "node prototypes/02-combat/server.js",
+    "weather": "node prototypes/02-combat/weather-service.js",
+    "test": "node prototypes/02-combat/test.js && node prototypes/02-combat/server.test.js && node prototypes/08-weather/test.js"
+  },
+  "optionalDependencies": {
+    "nats": "^2.28.0"
+  }
+}
