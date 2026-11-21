@@ -279,6 +279,11 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Orders go to the wing, not just the ship at its centre.** A player whose ship
   is destroyed (captain or fleet leader alike) keeps commanding their wing.
 - **Agency:** players may ignore orders or leave. Consequences go to their REP.
+- **Defecting** to the enemy is possible but should be rare and costly (owner
+  dislikes it): leaving a contract makes you neutral with no parent supply, no
+  joining the other side in the same battle until you've left the field, wages
+  held in escrow and forfeited if you walk, a bigger REP hit mid-fight, optional
+  notice periods in contracts, and leaders can blacklist.
 - **Retreat:** a player can run and pay another player to fly a dropship down to
   evacuate them (ties to 05 extraction / 06 descent).
 - **Leader powers:** reshuffle the fleet and reassign players between wings.
