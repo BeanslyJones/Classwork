@@ -283,6 +283,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   the centre (today's arena edge, made mobile, one per wing). Nested: pilots follow
   their captain's centre, captains the leader's, the leader the mission zone.
   Commanders give orders by moving the centre; players fly freely inside it.
+- **Centre = rally point that smoothly follows the cap ship:** it interpolates
+  toward the cap ship's new position at a capped speed (no snapping). If the cap
+  ship dies it carries on as a free rally point the commander moves.
+- **Most cap ships have no dodge; they have shields instead** (details open).
 - **Orders go to the wing, not just the ship at its centre.** A player whose ship
   is destroyed (captain or fleet leader alike) keeps commanding their wing.
 - **Agency:** players may ignore orders or leave. Consequences go to their REP.
