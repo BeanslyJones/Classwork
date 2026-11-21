@@ -403,3 +403,25 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   on the biggest ships, smaller cannons below), and utility. Exact role list open.
 - **Every ship is customised with parts** on the Tetris-style loadout grid (06's
   builder, decision 10's rolled per-cell stats; shields are parts too).
+
+## 31. Network traffic plan (cutting what the server sends to each player)
+Today: the whole battle, every ship, as JSON text, 30 times a second, to everyone
+(~150 KB/s per player in a normal battle, ~3–4 MB/s at 1,000 ships). Browsers draw
+everything themselves; nothing visual is ever sent. The server stays the single
+source of truth (no cheating, no drift).
+1. **Only what you can see** — max zoom bounds each player's view; send only ships
+   in it (+ margin). Built as "interest filtering" (`INTEREST_RADIUS`), off by default.
+2. **Binary instead of text** — compact numbers; ~3–5× smaller.
+3. **Plan changes, not positions** — ships fly fixed arcs / straight lines between
+   orders (fixed speed + turn rate, boost only), so send a ship only when its plan
+   changes (order, AI re-aim, dodge / boost, lock-game start / release) plus events
+   (hits, deaths, torpedo going active, deploys). Browsers play movement forward.
+4. **Full refresh every 1–2 s** (and on join) to correct drift (browser maths isn't
+   bit-identical) and lost messages.
+5. **Shots sent once** (start point, tick, velocity); only guided missiles / active
+   torpedoes get updates.
+6. **Slower updates for far / overhead things** (aircraft, artillery, big missiles).
+7. **Hidden stays hidden:** dormant enemy torpedoes and out-of-view ships are never
+   sent (today they're only hidden on screen).
+Estimate: 10–50× less data in big battles (to measure on the load page). Works the
+same with or without NATS; NATS spreads the server's work, this shrinks the data.
