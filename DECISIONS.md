@@ -262,3 +262,25 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Not yet measured or play-tested. Revisit: confirm the gain on the load page, check
   levels near the 700/1400 edges, consider reusing the maps for AI and for what each
   player is sent.
+
+## 26. Fractal fleets (design direction — details still open)
+- **Shape:** a leader flies ~4 large ships; each large ship carries a captain's
+  wing of ~4 medium ships; each medium ship carries a pilot's wing of ~4 small
+  ships. Everyone plays the same juggle, bigger ships higher up. Not every fleet
+  has this exact shape. One full tree = 1 + 4 + 16 + 64 = 85 players, ~340 ships.
+- **Size matchups:** large beats large; medium can be built for large, medium or
+  small; small beats small and medium. Exceptions, e.g. heavy bombers diving a
+  huge ship's weak point.
+- **View:** the bigger your ship, the more of the map you see (also what the server
+  sends you).
+- **Tether:** every ship has a battery (many sizes). A parent ship supplies energy
+  and radiation shielding to its wing (04's field rules), so wings stay near it.
+  Losing the parent cuts that supply: batteries stop being topped up and drain.
+- **Orders go to the wing, not just the ship at its centre.** A player whose ship
+  is destroyed (captain or fleet leader alike) keeps commanding their wing.
+- **Agency:** players may ignore orders or leave. Consequences go to their REP.
+- **Retreat:** a player can run and pay another player to fly a dropship down to
+  evacuate them (ties to 05 extraction / 06 descent).
+- **Leader powers:** reshuffle the fleet and reassign players between wings.
+- **Mercenary economy:** the leader pays the players under them (wages / contracts
+  still to decide).
