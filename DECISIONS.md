@@ -360,6 +360,9 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   their votes count for less. REP is an aggregate over time, never one vote.
 - **Mass down-votes** on one player trigger an investigation (anti-brigading)
   rather than an instant REP drop.
-- ⚠ **Conflict to resolve:** decisions 27 and 28 say players see each other's REP
-  when negotiating and choosing a rescuer. With REP hidden, what do they see
-  instead? (open)
+- **What others see instead of numbers** (resolves decisions 27 / 28, where REP is
+  "shown" when negotiating or picking a rescuer):
+  - **Badges** that appear only once a track is clearly high or low, e.g.
+    "Reliable", "Untested", "Known deserter". No numbers.
+  - **Plain, verifiable history:** contracts finished vs broken, rescues
+    delivered, hours played.
