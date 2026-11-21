@@ -314,3 +314,18 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Leader powers:** reshuffle the fleet and reassign players between wings.
 - **Mercenary economy:** the leader pays the players under them (wages / contracts
   still to decide).
+
+## 27. Contracts and negotiation (concept — to refine)
+- **Contracts are flexible bundles.** Most common shape: a **deposit up front + pay
+  on completion**. The game holds the money in escrow and pays it out by the terms.
+- **Terms a contract can mix** (starting list): deposit; completion pay; loot /
+  salvage share %; performance bonuses (kills, damage, objectives, formation);
+  duration (one battle, a mission, a campaign); role and wing; notice period for
+  leaving; who pays for an evac dropship; penalties for walking out; ship / repair
+  cover.
+- **Negotiation:** offer → counter-offer → accept / decline, term by term. Both sides
+  see each other's REP while negotiating. Contracts can be saved as templates and
+  reused. Accepted contracts are stored and enforced by the game, not by trust.
+- Ties to: REP (breaking terms costs REP), defection rules (decision 26), the
+  mercenary economy, leaders reshuffling wings (a reassignment may need the
+  contract to allow it).
