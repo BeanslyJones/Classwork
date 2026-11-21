@@ -250,3 +250,15 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   as its own service with wider, slower interest; 2D helps by a constant factor;
   ~100–150 ms tick (7–10 Hz) for the big server, client gliding + own-ship prediction,
   lock-game release sent as a tick number.
+
+## 25. Update levels from a distance map — TESTING, NEEDS REVISIT
+- Idea from the owner (a "web" passing distances outward), applied to grid squares
+  instead of ships: squares holding a side's ships start at 0 and the distance to
+  that side spreads outward square to square; each ship reads its own square to get
+  its update level (Active < 700, Reduced < 1400, Dormant beyond).
+- Replaces the per-ship nearest-enemy search, which was ~52% of the tick at 1,000
+  ships. Cost now grows with squares, not ships. Accurate to about one square (128).
+- Switch: tunable `gateField` (1 = distance map, the default; 0 = old search).
+- Not yet measured or play-tested. Revisit: confirm the gain on the load page, check
+  levels near the 700/1400 edges, consider reusing the maps for AI and for what each
+  player is sent.

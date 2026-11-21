@@ -100,6 +100,7 @@
     fleetDeploySec:  { value: 20,    min: 3,   max: 120,  tooltip: 'Fleet Battle: every this many seconds, every player brings their next ship in.' },
     friendlyFire:    { value: 0,     min: 0,   max: 1,    tooltip: 'Separate toggle, off by default. AoE never hurts allies unless this is 1.' },
     gateReducedDist: { value: 700,   min: 100, max: 4000, tooltip: 'Farther than this from any foe -> Reduced tier (combat every 2nd tick).' },
+    gateField:       { value: 1,     min: 0,   max: 1,    tooltip: 'TESTING, needs revisit. 1 = each ship reads its update level (Active / Reduced / Dormant) from a distance-to-enemy map spread across grid squares (cheap at any fleet size, accurate to about one square). 0 = the old exact search around every ship.' },
     gateDormantDist: { value: 1400,  min: 200, max: 8000, tooltip: 'Farther than this -> Dormant tier (every 4th tick, no target acquisition).' },
   };
 
@@ -1325,7 +1326,7 @@
     this.maxHullR = maxHull;
 
     // --- Update gating: tier by distance to the nearest living foe. ---
-    for (const u of this.units) {
+    if (T.gateField >= 0.5) this._gateByField(); else for (const u of this.units) {
       if (u.state !== ALIVE) continue;
       let near = Infinity;
       const scan = id => { const v = F[id]; if (v.alive && v.team !== u.team) near = Math.min(near, Math.hypot(v.x - u.x, v.y - u.y)); };
@@ -1405,6 +1406,58 @@
     mark('upkeep');
 
     this.tick++;
+  };
+
+  // ---- TESTING, needs revisit (decision 25): update levels from a distance map. ----
+  // Instead of every ship searching around itself for the nearest enemy, the
+  // squares do it: squares holding a side's ships start at 0 and the distance
+  // spreads outward square to square (two-pass chamfer). Each ship then reads
+  // its own square. Cost grows with the number of squares, not ships. Accurate
+  // to about one square (128 units) — fine for the 700 / 1400 levels.
+  // To revisit: exact check near the level edges, reuse the maps elsewhere (AI,
+  // what each player needs to see), buffer reuse instead of per-tick arrays.
+  Sim.prototype._gateByField = function () {
+    const T = this.T;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const u of this.units) if (u.state === ALIVE) {
+      if (u.x < x0) x0 = u.x; if (u.x > x1) x1 = u.x; if (u.y < y0) y0 = u.y; if (u.y > y1) y1 = u.y;
+    }
+    if (x0 === Infinity) return;
+    const span = Math.max(x1 - x0, y1 - y0), cell = Math.max(128, span / 256); // at most ~256 x 256 squares
+    const nx = Math.floor((x1 - x0) / cell) + 1, ny = Math.floor((y1 - y0) / cell) + 1, n = nx * ny;
+    const D = cell, DD = cell * Math.SQRT2, idx = u => Math.floor((u.y - y0) / cell) * nx + Math.floor((u.x - x0) / cell);
+    const fields = [];
+    for (const team of [PLAYER, ENEMY]) {
+      const f = new Float32Array(n).fill(Infinity);
+      for (const u of this.units) if (u.state === ALIVE && u.team === team) f[idx(u)] = 0;
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { // forward pass
+        const i = y * nx + x; let v = f[i];
+        if (x > 0) v = Math.min(v, f[i - 1] + D);
+        if (y > 0) {
+          v = Math.min(v, f[i - nx] + D);
+          if (x > 0) v = Math.min(v, f[i - nx - 1] + DD);
+          if (x < nx - 1) v = Math.min(v, f[i - nx + 1] + DD);
+        }
+        f[i] = v;
+      }
+      for (let y = ny - 1; y >= 0; y--) for (let x = nx - 1; x >= 0; x--) { // backward pass
+        const i = y * nx + x; let v = f[i];
+        if (x < nx - 1) v = Math.min(v, f[i + 1] + D);
+        if (y < ny - 1) {
+          v = Math.min(v, f[i + nx] + D);
+          if (x < nx - 1) v = Math.min(v, f[i + nx + 1] + DD);
+          if (x > 0) v = Math.min(v, f[i + nx - 1] + DD);
+        }
+        f[i] = v;
+      }
+      fields.push(f);
+    }
+    for (const u of this.units) {
+      if (u.state !== ALIVE) continue;
+      const d = fields[1 - u.team][idx(u)];
+      u.tier = d > T.gateDormantDist ? 2 : (d > T.gateReducedDist ? 1 : 0);
+      if (u.held) u.tier = 0; // the possessed ship is always full-rate
+    }
   };
 
   // Fleet Battle: bring a fleet's chosen next ship into the fight at its side's rear.
