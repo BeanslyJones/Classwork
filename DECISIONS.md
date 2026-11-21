@@ -244,6 +244,13 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   margins (~max weapon reach + one tick of travel), quadtree split/merge by load
   (Hadean / Dual Universe), hand-off at tick boundaries, EVE-style time dilation for a
   single overloaded cell. Write only a thin cell manager; reuse NATS + our sim.
+- **Option C (owner's idea) — a fleet tracker per fleet:** when a fleet forms, a helper
+  service starts for it and moves along with it, tracking the whole fleet tree (who
+  flies what), rally points / leash areas, tethers, hangars, the fleet's contracts,
+  and which battle cell each ship is in. Fleets stay together (leashes), so hand-off
+  happens once per fleet instead of per ship; ~85 players / ~340 ships per tracker
+  is a natural load unit. Fleet-vs-fleet fights and big brawls still run in the
+  battle cells; a crashed tracker recovers from the recovery stream.
 - **Either way:** binary, changes-only, visibility-filtered updates (max zoom bounds
   what each player needs); shots sent once (deterministic flight), only guided
   ordnance updated; overhead layer (aircraft, artillery arcs, large missiles, lasers)
