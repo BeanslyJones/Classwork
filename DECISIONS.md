@@ -358,6 +358,10 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   a commander.
 - **Material:** a separate stat for how much your fleet and gear are worth.
 - **Level:** each player also has a level (how it's earned and what it gates: open).
+- **Recovered from the owner's earlier design talks (~2–3 July 2026, original chat not
+  available here):** other players can factor reputation into deciding whether to
+  join a mission, and **every mission's results include a REP change** for the
+  players in it (the mission module outputs it alongside payouts).
 - **Moves slowly,** based on time in game and actions (contracts kept or broken,
   orders followed, deserting mid-fight, rescues delivered, etc.).
 - **Player votes:** you can up- or down-vote a player, but only one you could see
