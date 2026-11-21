@@ -349,9 +349,14 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - Ties to: evac dropships (decision 26), escrow and contracts (27), REP.
 
 ## 29. REP (reputation)
-- **Several tracks, not one number,** e.g. Reliability (keeps contracts, doesn't walk
-  out), Combat (results in battle), Command (how wings do under you). Final list open.
+- **Several hidden tracks, not one number,** e.g. Reliability (keeps contracts,
+  doesn't walk out) and Combat (results in battle). Final list open.
 - **Hidden:** players never see the raw numbers.
+- **Command is separate and visible:** command ability has its own score that
+  players can see (not part of hidden REP).
+- **Commanding is gated by REP:** you need a certain (hidden) REP before you can be
+  a commander.
+- **Material:** a separate stat for how much your fleet and gear are worth.
 - **Moves slowly,** based on time in game and actions (contracts kept or broken,
   orders followed, deserting mid-fight, rescues delivered, etc.).
 - **Player votes:** you can up- or down-vote a player, but only one you could see
