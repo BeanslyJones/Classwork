@@ -276,6 +276,13 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
 - **Tether:** every ship has a battery (many sizes). A parent ship supplies energy
   and radiation shielding to its wing (04's field rules), so wings stay near it.
   Losing the parent cuts that supply: batteries stop being topped up and drain.
+- **Leash areas (how orders work):** each wing plays inside a moving circle centred
+  on its cap ship or a mobile rally point, moving at a set speed (about the cap
+  ship's). Radius = the player's max zoom: the screen stays centred on it and its
+  edge is the screen's edge. Ships that fly past the edge are turned back toward
+  the centre (today's arena edge, made mobile, one per wing). Nested: pilots follow
+  their captain's centre, captains the leader's, the leader the mission zone.
+  Commanders give orders by moving the centre; players fly freely inside it.
 - **Orders go to the wing, not just the ship at its centre.** A player whose ship
   is destroyed (captain or fleet leader alike) keeps commanding their wing.
 - **Agency:** players may ignore orders or leave. Consequences go to their REP.
