@@ -287,6 +287,9 @@ or in the wrong type of radiation field. Ties descent to §8's multiplayer map,
   toward the cap ship's new position at a capped speed (no snapping). If the cap
   ship dies it carries on as a free rally point the commander moves.
 - **Most cap ships have no dodge; they have shields instead** (details open).
+- **Cap ship boost (where a cap ship has one):** the wing gets an audio + visual
+  cue ("boost in 3…") so they can boost with it. Ships left outside the leash area
+  (pulled offscreen) get a few seconds, then are steered back toward the centre.
 - **Orders go to the wing, not just the ship at its centre.** A player whose ship
   is destroyed (captain or fleet leader alike) keeps commanding their wing.
 - **Agency:** players may ignore orders or leave. Consequences go to their REP.
