@@ -125,7 +125,9 @@ function render(p) {
   $('tick').textContent = p.stepMs + ' ms';
   $('tickSub').textContent = 'average battle tick (budget ' + p.budgetMs + ' ms) · worst ' + p.stepMax + ' ms · ' + p.ticksPerSec + ' ticks/s · loop ran up to ' + p.lagMax + ' ms late';
   $('net').textContent = (p.perScreenKBs || 0) + ' KB/s';
-  $('netSub').textContent = 'to the busiest screen · total ' + (p.outKBs || 0) + ' KB/s · snapshot ' + p.snapKB + ' KB × ' + p.snapHz + '/s · home Wi-Fi gets shaky past ~2,500 KB/s per screen';
+  const raw = p.rawPerScreenKBs || 0, wire = p.perScreenKBs || 0;
+  $('netSub').textContent = 'to the busiest screen' + (p.compressed && raw ? ' (gzip: ' + raw + ' KB/s before compression, ' + (wire ? (raw / wire).toFixed(1) : '–') + '× smaller)' : ' (no compression)') +
+    ' · total ' + (p.outKBs || 0) + ' KB/s · snapshot ' + p.snapKB + ' KB × ' + p.snapHz + '/s · home Wi-Fi gets shaky past ~2,500 KB/s per screen';
   drawChart();
 }
 

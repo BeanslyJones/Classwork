@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const zlib = require('zlib');
+const COMPRESS = process.env.COMPRESS !== '0'; // gzip each screen's live stream (COMPRESS=0 to compare without)
 const { Sim, TUNABLES, SONGS } = require('./sim.js');
 const { createBus } = require('../shared/bus.js');
 const Wx = require('../shared/wx/agents.js');
@@ -234,7 +236,14 @@ function startGateway(bus, opts) {
   const filtered = opts.interestRadius > 0;
 
   let bytesOut = 0;
-  function write(c, text) { c.res.write(text); c.bytes += text.length; bytesOut += text.length; }
+  // Every message to a screen goes through here. With gzip, each write is flushed
+  // straight away (sync flush) so nothing waits in the compressor; c.wire counts
+  // the compressed bytes that actually cross the network.
+  function write(c, text) {
+    c.bytes += text.length; bytesOut += text.length;
+    if (c.gz) { c.gz.write(text); c.gz.flush(zlib.constants.Z_SYNC_FLUSH); }
+    else { c.res.write(text); c.wire += text.length; }
+  }
   function send(c, type, data) { write(c, 'event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'); }
   function broadcast(type, data) { const text = 'event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients.values()) write(c, text); }
   function lobby() { return Object.assign({ seats: seats.map(s => s !== null), players: clients.size }, settings); }
@@ -276,9 +285,14 @@ function startGateway(bus, opts) {
   bus.subscribe('sim.perf', p => {
     const now = Date.now(), secs = Math.max(0.1, (now - perfAt) / 1000);
     perfAt = now;
-    let maxC = 0;
-    for (const c of clients.values()) { maxC = Math.max(maxC, c.bytes / secs); c.bytes = 0; }
-    const msg = Object.assign({ screens: clients.size, snapKB: +(snapBytes / 1024).toFixed(1), outKBs: Math.round(bytesOut / secs / 1024), perScreenKBs: Math.round(maxC / 1024) }, p);
+    // What actually crosses the network (compressed) vs the text before compression.
+    let maxWire = 0, maxRaw = 0, wireTotal = 0;
+    for (const c of clients.values()) {
+      maxWire = Math.max(maxWire, c.wire / secs); maxRaw = Math.max(maxRaw, c.bytes / secs);
+      wireTotal += c.wire; c.bytes = 0; c.wire = 0;
+    }
+    const msg = Object.assign({ screens: clients.size, snapKB: +(snapBytes / 1024).toFixed(1), outKBs: Math.round(wireTotal / secs / 1024),
+                                perScreenKBs: Math.round(maxWire / 1024), rawPerScreenKBs: Math.round(maxRaw / 1024), compressed: COMPRESS }, p);
     msg.cpu = Object.assign({}, p.cpu, { sending: gwMs });
     gwMs = 0;
     broadcast('perf', msg);
@@ -366,10 +380,18 @@ function startGateway(bus, opts) {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-      res.write(': connected\n\n');
+      const gzipOk = COMPRESS && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      res.writeHead(200, Object.assign({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', Connection: 'keep-alive' },
+                                       gzipOk ? { 'Content-Encoding': 'gzip' } : {}));
       const id = crypto.randomBytes(8).toString('hex');
-      const c = { res: res, seat: -1, bytes: 0 };
+      const c = { res: res, seat: -1, bytes: 0, wire: 0, gz: null };
+      if (gzipOk) {
+        c.gz = zlib.createGzip({ level: 4 });
+        c.gz.on('data', d => { c.wire += d.length; });
+        c.gz.pipe(res);
+        res.on('close', () => c.gz.destroy());
+      }
+      write(c, ': connected\n\n');
       clients.set(id, c);
       c.seat = takeSeat(id);
       hello(c, id);
